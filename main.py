@@ -81,8 +81,14 @@ def _on_tray_exit(icon, item) -> None:
 # 剪贴板回调（监听线程 → 放入 _clip_queue）
 # ═══════════════════════════════════════════════════════════
 
+_last_callback_text = ""
+
 def _on_clipboard_change(text: str) -> None:
-    """剪贴板变更回调 — 放入剪贴板队列"""
+    """剪贴板变更回调 — 放入剪贴板队列（带去重）"""
+    global _last_callback_text
+    if text == _last_callback_text:
+        return
+    _last_callback_text = text
     _clip_queue.put(text)
 
 

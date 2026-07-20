@@ -121,13 +121,18 @@ class ClipboardMonitor:
         _log("poll loop started")
         while self._running:
             try:
-                text = _read_clipboard()
+                raw = _read_clipboard()
             except Exception as e:
                 _log(f"poll: read error: {e}")
                 time.sleep(Config.POLL_INTERVAL)
                 continue
 
-            # 去重：没变化
+            # ── 标准化文本（去 null 字符 + strip） ──────────
+            # 有些应用复制时剪贴板会带尾随空字符/换行，
+            # 两次读取之间可能有微小差异，导致去重失效。
+            text = raw.rstrip("\x00").strip()
+
+            # 去重：没变化（用标准化后的文本比较）
             if text == self._last_text:
                 time.sleep(Config.POLL_INTERVAL)
                 continue

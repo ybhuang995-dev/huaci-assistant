@@ -14,20 +14,21 @@ from config import MODES, MODE_TITLES, DEFAULT_MODE
 
 FONT = "Microsoft YaHei UI"
 
-# Catppuccin Mocha 暗色主题
+# 白色主题
 C = {
-    "bg": "#1e1e2e",
-    "surface": "#181825",
-    "text": "#cdd6f4",
-    "subtext": "#6c7086",
-    "accent": "#89b4fa",        # 蓝 — 翻译
-    "accent_green": "#a6e3a1",  # 绿 — 润色
-    "accent_purple": "#cba6f7", # 紫 — 提问
-    "accent_yellow": "#f9e2af", # 黄 — 总结
-    "hover": "#f38ba8",
-    "scroll_bg": "#313244",
-    "tab_active": "#313244",
-    "tab_inactive": "#181825",
+    "bg": "#ffffff",            # 主背景
+    "surface": "#f3f4f6",       # 标签栏 / 操作栏
+    "text": "#1f2937",          # 正文
+    "subtext": "#9ca3af",       # 次要文字
+    "accent": "#3b82f6",        # 蓝 — 翻译
+    "accent_green": "#10b981",  # 绿 — 润色
+    "accent_purple": "#8b5cf6", # 紫 — 提问
+    "accent_yellow": "#f59e0b", # 黄 — 总结
+    "hover": "#ef4444",         # 关闭按钮 hover
+    "scroll_bg": "#e5e7eb",    # 滚动条
+    "tab_active": "#ffffff",    # 激活标签背景
+    "tab_inactive": "#f3f4f6",      # 非激活标签背景（与 bar 同色）
+    "border": "#e5e7eb",        # 边框
 }
 
 # 模式对应的强调色
@@ -106,7 +107,11 @@ class FloatingWindow:
         y = max(0, min(y, sh - h))
 
         self.window.geometry(f"{w}x{h}+{x}+{y}")
-        self.window.configure(bg=C["bg"])
+        self.window.configure(bg=C["border"])
+
+        # 内层容器（白色，1px 边框效果）
+        self._inner = tk.Frame(self.window, bg=C["bg"])
+        self._inner.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
 
         self._build_tab_bar()
         self._build_original_preview()
@@ -155,7 +160,7 @@ class FloatingWindow:
 
     def _build_tab_bar(self) -> None:
         """构建模式标签栏：[翻译] [提问] [润色] [总结] [✕]"""
-        bar = tk.Frame(self.window, bg=C["surface"], height=36)
+        bar = tk.Frame(self._inner, bg=C["surface"], height=36)
         bar.pack(fill=tk.X, side=tk.TOP)
         bar.pack_propagate(False)
 
@@ -179,12 +184,16 @@ class FloatingWindow:
         # 关闭按钮
         close = tk.Button(bar, text="✕", bg=C["surface"], fg=C["subtext"],
                           font=(FONT, 12), bd=0, cursor="hand2",
-                          activebackground=C["hover"], activeforeground="#1e1e2e",
+                          activebackground=C["hover"], activeforeground="#ffffff",
                           command=self.hide)
         close.pack(side=tk.RIGHT, padx=6, pady=2)
 
         # 高亮当前模式
         self._highlight_active_tab()
+
+        # 标签栏下方分隔线
+        sep = tk.Frame(self._inner, bg=C["border"], height=1)
+        sep.pack(fill=tk.X, side=tk.TOP)
 
         # 拖拽：标题栏
         bar.bind("<Button-1>", self._start_drag)
@@ -221,7 +230,7 @@ class FloatingWindow:
 
     def _build_original_preview(self) -> None:
         """构建原文预览行"""
-        frame = tk.Frame(self.window, bg=C["bg"], height=28)
+        frame = tk.Frame(self._inner, bg=C["bg"], height=28)
         frame.pack(fill=tk.X, side=tk.TOP, padx=10, pady=(2, 0))
         frame.pack_propagate(False)
 
@@ -239,14 +248,14 @@ class FloatingWindow:
 
     def _build_result_area(self) -> None:
         """构建滚动结果区域"""
-        container = tk.Frame(self.window, bg=C["bg"])
+        container = tk.Frame(self._inner, bg=C["bg"])
         container.pack(fill=tk.BOTH, expand=True, padx=2, pady=(2, 0))
 
         self.result_area = tk.Text(
             container, bg=C["bg"], fg=C["text"],
             insertbackground=C["text"], font=(FONT, 11),
             wrap=tk.WORD, bd=0, padx=14, pady=10,
-            selectbackground="#585b70", selectforeground=C["text"],
+            selectbackground="#bfdbfe", selectforeground=C["text"],
             relief=tk.FLAT,
         )
         self.result_area.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
@@ -267,9 +276,13 @@ class FloatingWindow:
 
     def _build_action_bar(self) -> None:
         """构建底部操作栏"""
-        bar = tk.Frame(self.window, bg=C["surface"], height=34)
+        bar = tk.Frame(self._inner, bg=C["surface"], height=34)
         bar.pack(fill=tk.X, side=tk.BOTTOM)
         bar.pack_propagate(False)
+
+        # 操作栏上方分隔线（pack 在 bar 之后 → 在 bar 上方）
+        sep = tk.Frame(self._inner, bg=C["border"], height=1)
+        sep.pack(fill=tk.X, side=tk.BOTTOM)
 
         btn_frame = tk.Frame(bar, bg=C["surface"])
         btn_frame.pack(side=tk.LEFT, padx=8)
@@ -278,7 +291,7 @@ class FloatingWindow:
         copy_btn = tk.Button(
             btn_frame, text="📋 复制", bg=C["surface"], fg=C["text"],
             font=(FONT, 9), bd=0, cursor="hand2", padx=8,
-            activebackground=C["tab_active"], activeforeground=C["accent"],
+            activebackground="#e5e7eb", activeforeground=C["accent"],
             command=self._copy_result,
         )
         copy_btn.pack(side=tk.LEFT, padx=(0, 4))
@@ -287,7 +300,7 @@ class FloatingWindow:
         retry_btn = tk.Button(
             btn_frame, text="🔄 重试", bg=C["surface"], fg=C["text"],
             font=(FONT, 9), bd=0, cursor="hand2", padx=8,
-            activebackground=C["tab_active"], activeforeground=C["accent"],
+            activebackground="#e5e7eb", activeforeground=C["accent"],
             command=self._retry,
         )
         retry_btn.pack(side=tk.LEFT, padx=(0, 4))

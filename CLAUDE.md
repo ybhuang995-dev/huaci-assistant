@@ -35,13 +35,16 @@
 
 ## 技术栈
 
-- **语言**：Python（主人正在学，可同步讲解）
+- **语言**：Python 3.10+
 - **LLM API**：DeepSeek API（OpenAI 兼容）/ 后续可扩展 OpenAI、Ollama
-- **剪贴板监听**：`pyperclip` 或 `win32clipboard`（轮询剪贴板变更）
-- **全局热键**（可选）：`keyboard` 或 `pynput`（强制唤起悬浮窗，作为剪贴板监听的补充）
-- **UI 悬浮窗**：先 `tkinter` 跑通，后续可升级 `PyQt6`
-- **流式处理**：`httpx` 或 `aiohttp`（SSE streaming）
+- **剪贴板监听**：`ctypes` 直接调用 Windows API（`OpenClipboard`/`GetClipboardData`/`GlobalLock`），轮询间隔 400ms
+- **UI 悬浮窗**：`tkinter`（无边框 Toplevel，置顶，可拖拽），浅色主题
+- **HTTP 请求**：`requests`（当前非流式，后续换 `httpx` 做 SSE streaming）
+- **系统托盘**：`pystray` + `Pillow`（生成托盘图标）
+- **配置管理**：`python-dotenv`（`.env` 文件）
 - **打包分发**：`PyInstaller` → 单 exe，系统托盘常驻，开机自启
+
+> **已废弃的尝试**：`keyboard` 库 + `keybd_event`/`SendInput` 模拟 Ctrl+C。原因：键盘钩子线程重入导致死锁。剪贴板监听方案更简单可靠。
 
 ## 智能过滤（防误触）
 
@@ -68,24 +71,48 @@ OpenAI Translator 的经验：如果没有过滤，复制文件路径、单个�
 | 润色 | 弹出窗内切换 | "优化以下文字的表达，不改原意……" |
 | 总结 | 弹出窗内切换 | "用简洁的要点总结以下内容……" |
 
-## 引擎抽象层（精简版）
+## 引擎层（当前实现）
 
-只支持 DeepSeek 不需要完整抽象工厂，但留扩展口：
+只有一个 `DeepSeekEngine`，调用 OpenAI 兼容 API。后续扩展再加抽象。
 
 ```python
-class BaseEngine:
-    """引擎基类"""
-    def translate(self, text: str, mode: str, stream: bool) -> str: ...
-    def _build_prompt(self, text: str, mode: str) -> str: ...
-    def _stream_request(self, messages: list) -> Iterator[str]: ...
-
-class DeepSeekEngine(BaseEngine):
+class DeepSeekEngine:
     """DeepSeek API（OpenAI 兼容）"""
-    # api_base, api_key, model
+    def query(self, text: str, mode: str) -> str:
+        """根据 mode 查 MODES 配置的 system_prompt，调用 /chat/completions"""
 
-class OllamaEngine(BaseEngine):   # 后续扩展
-    """本地 Ollama 模型"""
+# 全局单例
+engine = DeepSeekEngine()
 ```
+
+## 架构（当前实现）
+
+```
+┌─────────────────┐     _clip_queue      ┌──────────┐
+│ ClipboardMonitor │ ─────────────────→  │ 主线程    │
+│ (daemon thread)  │                     │ (tkinter) │
+│ 轮询 400ms       │                     │ _tick()   │
+│ 智能过滤         │                     │ 100ms     │
+└─────────────────┘                     └──────────┘
+                                               │
+                                         显示/刷新悬浮窗
+                                         放入 _work_queue
+                                               │
+                                               ▼
+                                        ┌──────────┐
+                                        │ Worker   │
+                                        │ (daemon) │
+                                        │ 调 API   │
+                                        └──────────┘
+                                               │
+                                         root.after()
+                                         更新结果区域
+```
+
+**关键设计决策**：
+- **双队列**：`_clip_queue`（剪贴板事件 → 主线程处理）和 `_work_queue`（API 查询 → 工作线程处理）分离，避免早期单队列导致的互相干扰 bug
+- **查询计数器**：`_query_counter` 全局递增，每次新查询 +1。Worker 返回结果时检查 `query_id`，如果已有更新查询则丢弃旧结果，防止过期结果覆盖新内容
+- **三层去重**：① 监听器层（标准化文本 `==` 比较）② 回调层（`_last_callback_text`）③ `mark_as_seen()`（主动复制结果时标记，避免自己写入剪贴板触发弹窗）
 
 ## 对标项目
 
@@ -113,20 +140,24 @@ class OllamaEngine(BaseEngine):   # 后续扩展
 
 ## 开发阶段
 
-### Phase 1：最小可用（MVP）
-- [ ] 剪贴板监听（轮询检测变更）
-- [ ] 智能过滤（去重 + 简单规则）
-- [ ] DeepSeek API 调用（非流式翻译）
-- [ ] tkinter 悬浮窗显示结果
-- [ ] 系统托盘图标 + 右键菜单（启用/禁用/退出）
-- [ ] 悬浮窗内模式切换（翻译/提问）
+### Phase 1：最小可用（MVP）✅ 已完成
+- [x] 剪贴板监听（ctypes 轮询，400ms 间隔）
+- [x] 智能过滤（8 条正则规则：去重/路径/URL/文件名/纯数字/太短）
+- [x] DeepSeek API 调用（非流式，4 种模式）
+- [x] tkinter 悬浮窗（浅色主题，500×400，鼠标旁弹出）
+- [x] 系统托盘图标 + 右键菜单（退出）
+- [x] 悬浮窗内模式切换（翻译/提问/润色/总结）
+- [x] 双队列架构 + 查询计数器（防过期结果覆盖）
+- [x] Enter 复制结果、Esc 关闭
+- [x] 拖拽移动窗口
 
 ### Phase 2：完善体验
 - [ ] SSE 流式输出（结果逐字出现）
-- [ ] 悬浮窗优化：毛玻璃效果、置顶、拖拽、鼠标旁弹出
+- [ ] 悬浮窗优化：毛玻璃效果、窗口大小可调
 - [ ] 单词检测 → 词典模式（发音+词性+例句）
-- [ ] Enter 复制结果、Esc 关闭
 - [ ] 全局热键补充（强制唤起悬浮窗，不依赖剪贴板）
+- [ ] 复制按钮视觉反馈（已复制提示）
+- [ ] 加载动画（⏳ 替换为骨架屏/spinner）
 
 ### Phase 3：打磨发布
 - [ ] 自定义快捷键、自定义 Prompt
@@ -143,6 +174,25 @@ class OllamaEngine(BaseEngine):   # 后续扩展
 - ✅ 读参考项目源码学习思路
 - ❌ 不照搬参考项目的代码（理解后自己实现）
 - ❌ 不做浏览器插件、不做移动端
+
+## 项目结构
+
+```
+划词助手/
+├── main.py              ← 主入口：三线程 + 双队列 + 托盘
+├── clipboard_monitor.py ← ctypes 剪贴板轮询 + 8 条正则过滤
+├── floating_window.py   ← 悬浮窗：标签栏 + 原文 + 结果 + 操作栏
+├── engine.py            ← DeepSeek API（OpenAI 兼容）
+├── config.py            ← 配置管理：模式定义、过滤规则、API Key
+├── requirements.txt     ← 依赖（requests pystray Pillow python-dotenv）
+├── run.bat              ← Windows 一键启动
+├── .env.example         ← 配置模板
+├── .env                 ← 实际配置（已 gitignore）
+├── .gitignore
+├── CLAUDE.md            ← 本文件
+├── text_capture.py      ← 废弃：Ctrl+C 模拟方案
+└── deepseek_client.py   ← 废弃：旧 API 客户端
+```
 
 ## 输出风格
 

@@ -189,9 +189,7 @@ engine = DeepSeekEngine()
 ├── .env.example         ← 配置模板
 ├── .env                 ← 实际配置（已 gitignore）
 ├── .gitignore
-├── CLAUDE.md            ← 本文件
-├── text_capture.py      ← 废弃：Ctrl+C 模拟方案
-└── deepseek_client.py   ← 废弃：旧 API 客户端
+└── CLAUDE.md            ← 本文件
 ```
 
 ## 输出风格

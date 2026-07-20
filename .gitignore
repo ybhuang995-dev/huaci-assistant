@@ -1,0 +1,23 @@
+# 密钥
+.env
+
+# 日志
+app.log
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 参考项目（不提交）
+.refs/
+
+# IDE
+.vscode/
+.idea/
+
+# 打包产物
+dist/
+build/
+*.spec

@@ -1,212 +1,192 @@
 """
-划词助手 — 主入口
-=================
-Windows 全局划词翻译 + AI 提问工具。
+划词助手 — 主入口（剪贴板监听版）
+================================
+借鉴 OpenAI Translator 的核心设计：监听剪贴板变更，复制即翻译。
 
-启动后常驻系统托盘，监听全局热键：
-  Ctrl+Alt+T  →  翻译选中文本
-  Ctrl+Alt+Q  →  AI 问答
+流程：
+  用户 Ctrl+C → 剪贴板监听 → 智能过滤 → 悬浮窗 → API 调用 → 显示结果
 
-架构说明：
-  - 主线程：tkinter 消息循环
-  - 托盘线程：pystray 系统托盘图标
-  - 钩子线程：keyboard 库内部线程，监听热键
-  - 热键回调在钩子线程执行 → 通过 root.after() 切回主线程更新 UI
+架构：
+  - 主线程：tkinter 消息循环 + UI 更新
+  - 监听线程：ClipboardMonitor 轮询剪贴板
+  - 工作线程：API 调用（不阻塞 UI）
+
+  关键：使用两个独立队列避免互相干扰
+  - _clip_queue：剪贴板事件（主线程 _tick 处理 → 显示窗口）
+  - _work_queue：API 查询（工作线程处理 → 更新窗口）
 """
 
+import queue
 import threading
 import tkinter as tk
-from tkinter import messagebox
-import keyboard
 import pystray
 from PIL import Image, ImageDraw
 
-from config import Config
-from text_capture import capture_selected_text
-from deepseek_client import client as ai_client
+from config import Config, DEFAULT_MODE
+from clipboard_monitor import ClipboardMonitor, _log
+from engine import engine
 from floating_window import FloatingWindow
 
+# ── 清空日志 ──────────────────────────────────────────────
+import os as _os
+_log_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "app.log")
+try:
+    with open(_log_path, "w", encoding="utf-8") as f:
+        f.write("")
+except Exception:
+    pass
+_log("===== 划词助手启动 =====")
+
 # ── 全局状态 ──────────────────────────────────────────────
-_exit_flag = threading.Event()  # 退出信号，线程安全
+_exit_flag = threading.Event()
+
+# 两个独立队列：剪贴板事件（主线程处理） + API 查询（工作线程处理）
+_clip_queue: queue.Queue = queue.Queue()
+_work_queue: queue.Queue = queue.Queue()
+
+_query_counter = 0
+_query_lock = threading.Lock()
 
 
 # ═══════════════════════════════════════════════════════════
 # 系统托盘
 # ═══════════════════════════════════════════════════════════
 
-def _create_tray_icon_image() -> Image.Image:
-    """
-    用 Pillow 生成系统托盘图标。
-
-    图标是一个蓝色圆形 + 白色对话气泡的简单图案，
-    在 16×16 的托盘区域中也能辨认。
-
-    Returns:
-        64×64 的 RGBA 图标
-    """
+def _create_tray_icon() -> Image.Image:
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-
-    # 蓝色圆形背景
     draw.ellipse([4, 4, 60, 60], fill="#4A90D9")
-
-    # 白色对话气泡（圆角矩形 + 底部小三角）
     draw.rounded_rectangle([14, 16, 50, 40], radius=4, fill="white")
-    # 气泡尾巴
     draw.polygon([(28, 40), (36, 40), (32, 48)], fill="white")
-
     return img
 
 
 def _run_tray() -> None:
-    """
-    运行系统托盘图标（在后台线程中调用）。
-
-    提供右键菜单：
-    - 快捷键提示（不可点击）
-    - 退出
-    """
     menu = pystray.Menu(
-        pystray.MenuItem(
-            "🈳 划词翻译  (Ctrl+Alt+T)",
-            lambda: None,
-            enabled=False,
-        ),
-        pystray.MenuItem(
-            "🤖 AI 提问  (Ctrl+Alt+Q)",
-            lambda: None,
-            enabled=False,
-        ),
+        pystray.MenuItem("划词助手 — 复制即翻译", lambda: None, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("退出", _on_tray_exit),
     )
-
-    icon = pystray.Icon(
-        "划词助手",
-        _create_tray_icon_image(),
-        "划词助手 — 选中文字 + 快捷键",
-        menu,
-    )
-    # run() 会阻塞当前线程直到 icon.stop() 被调用
+    icon = pystray.Icon("划词助手", _create_tray_icon(),
+                        "划词助手 — Ctrl+C 复制文字自动弹出", menu)
     icon.run()
 
 
 def _on_tray_exit(icon, item) -> None:
-    """托盘「退出」菜单回调"""
     _exit_flag.set()
     icon.stop()
 
 
 # ═══════════════════════════════════════════════════════════
-# 热键处理
+# 剪贴板回调（监听线程 → 放入 _clip_queue）
 # ═══════════════════════════════════════════════════════════
 
-def _handle_translate(root: tk.Tk, window: FloatingWindow) -> None:
-    """
-    Ctrl+Alt+T 热键回调。
-
-    执行流程（在 keyboard 钩子线程中）：
-    1. 模拟 Ctrl+C 捕获选中文本
-    2. 显示加载状态（通过 root.after 切回主线程）
-    3. 调用 DeepSeek API 翻译
-    4. 显示结果
-
-    整个流程在钩子线程中串行执行。
-    API 调用期间钩子线程被阻塞，但不会影响 UI 响应
-    （tkinter 主循环仍然正常运行）。
-    """
-    try:
-        # 1. 捕获选中文本
-        text = capture_selected_text()
-
-        if not text.strip():
-            root.after(
-                0,
-                lambda: window.show(
-                    "🈳 翻译",
-                    "⚠️ 未选中任何文字\n\n"
-                    "请先用鼠标选中要翻译的文字，再按 Ctrl+Alt+T。",
-                ),
-            )
-            return
-
-        # 2. 显示加载状态（切回主线程更新 UI）
-        root.after(
-            0,
-            lambda: window.show("🈳 翻译", "⏳ 正在翻译，请稍候..."),
-        )
-
-        # 3. 调用 API（在钩子线程中，不阻塞主线程）
-        result = ai_client.translate(text)
-
-        # 4. 显示结果（切回主线程）
-        root.after(0, lambda: window.show(f"🈳 翻译", result))
-
-    except Exception as e:
-        root.after(
-            0,
-            lambda: window.show("🈳 翻译", f"❌ 出错了：{e}"),
-        )
-
-
-def _handle_ask(root: tk.Tk, window: FloatingWindow) -> None:
-    """
-    Ctrl+Alt+Q 热键回调。
-
-    与翻译流程相同，只是调用 ai_client.ask() 而非 translate()。
-    """
-    try:
-        text = capture_selected_text()
-
-        if not text.strip():
-            root.after(
-                0,
-                lambda: window.show(
-                    "🤖 AI 问答",
-                    "⚠️ 未选中任何文字\n\n"
-                    "请先用鼠标选中文字，再按 Ctrl+Alt+Q。",
-                ),
-            )
-            return
-
-        root.after(
-            0,
-            lambda: window.show("🤖 AI 问答", "⏳ AI 正在思考，请稍候..."),
-        )
-
-        result = ai_client.ask(text)
-
-        root.after(0, lambda: window.show(f"🤖 AI 问答", result))
-
-    except Exception as e:
-        root.after(
-            0,
-            lambda: window.show("🤖 AI 问答", f"❌ 出错了：{e}"),
-        )
+def _on_clipboard_change(text: str) -> None:
+    """剪贴板变更回调 — 放入剪贴板队列"""
+    _clip_queue.put(text)
 
 
 # ═══════════════════════════════════════════════════════════
-# 退出检查
+# 工作线程（API 调用 — 从 _work_queue 取任务）
 # ═══════════════════════════════════════════════════════════
 
-def _schedule_exit_check(root: tk.Tk) -> None:
-    """
-    定期（200ms）检查退出信号。
+def _worker(root: tk.Tk, window: FloatingWindow) -> None:
+    """工作线程：处理 API 查询"""
+    while not _exit_flag.is_set():
+        try:
+            task = _work_queue.get(timeout=0.5)
+        except queue.Empty:
+            continue
 
-    当用户点击托盘「退出」时，_exit_flag 被设置。
-    检测到信号后：
-    1. 卸载所有键盘钩子
-    2. 销毁 tkinter 窗口 → mainloop 退出 → 程序结束
-    """
+        text, mode, query_id = task
+        _log(f"WORKER: query [{mode}] len={len(text)}")
+        try:
+            result = engine.query(text, mode)
+        except Exception as e:
+            result = f"❌ 查询出错：{e}"
 
-    def _check():
+        # 检查是否已被更新的查询取代
+        with _query_lock:
+            if query_id != _query_counter:
+                _log(f"WORKER: result discarded (stale query {query_id})")
+                continue
+
+        _log(f"WORKER: result ready, len={len(result)}")
+        root.after(0, lambda r=result: window.update_result(r))
+
+
+# ═══════════════════════════════════════════════════════════
+# 模式切换 / 重试回调
+# ═══════════════════════════════════════════════════════════
+
+def _make_mode_switch_handler(window: FloatingWindow):
+    def handler(mode: str) -> None:
+        global _query_counter
+        with _query_lock:
+            _query_counter += 1
+            qid = _query_counter
+        _log(f"UI: mode switch to [{mode}], qid={qid}")
+        _work_queue.put((window.original_text, mode, qid))
+    return handler
+
+
+def _make_retry_handler(window: FloatingWindow):
+    def handler() -> None:
+        global _query_counter
+        with _query_lock:
+            _query_counter += 1
+            qid = _query_counter
+        _log(f"UI: retry [{window.current_mode}], qid={qid}")
+        _work_queue.put((window.original_text, window.current_mode, qid))
+    return handler
+
+
+# ═══════════════════════════════════════════════════════════
+# 主线程：处理剪贴板事件
+# ═══════════════════════════════════════════════════════════
+
+def _start_query_for_text(root: tk.Tk, window: FloatingWindow,
+                          text: str) -> None:
+    """显示窗口 + 发起 API 查询"""
+    global _query_counter
+    with _query_lock:
+        _query_counter += 1
+        qid = _query_counter
+
+    _log(f"MAIN: show window for [{text[:60]}], qid={qid}")
+
+    # 显示悬浮窗（加载状态）
+    window.show(text, "⏳ 正在处理，请稍候...", mode=DEFAULT_MODE)
+
+    # 放入工作队列
+    _work_queue.put((text, DEFAULT_MODE, qid))
+
+
+# ═══════════════════════════════════════════════════════════
+# 主循环中的剪贴板事件处理 + 退出检查
+# ═══════════════════════════════════════════════════════════
+
+def _schedule_main_loop(root: tk.Tk, window: FloatingWindow,
+                        monitor: ClipboardMonitor) -> None:
+    """定期处理剪贴板队列中的事件"""
+
+    def _tick():
         if _exit_flag.is_set():
-            keyboard.unhook_all()  # 清理 hotkey 钩子
-            root.destroy()         # 退出 tkinter 主循环
-        else:
-            root.after(200, _check)
+            monitor.stop()
+            root.destroy()
+            return
 
-    root.after(200, _check)
+        # 批量处理剪贴板事件（每次最多取 3 个，避免阻塞主循环）
+        try:
+            for _ in range(3):
+                text = _clip_queue.get_nowait()
+                _start_query_for_text(root, window, text)
+        except queue.Empty:
+            pass
+
+        root.after(100, _tick)
+
+    root.after(100, _tick)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -214,66 +194,56 @@ def _schedule_exit_check(root: tk.Tk) -> None:
 # ═══════════════════════════════════════════════════════════
 
 def main() -> None:
-    """应用程序入口"""
-
-    # ── 启动前检查 ──
     if not Config.DEEPSEEK_API_KEY:
-        # 用 tkinter 弹窗提示（用户体验更好）
-        # 但 tkinter root 还没创建，先用 print
-        print("=" * 50)
-        print("⚠️  未配置 DEEPSEEK_API_KEY！")
-        print()
-        print("请按以下步骤操作：")
-        print("1. 复制 .env.example → .env")
-        print("2. 打开 .env，填入你的 DeepSeek API Key")
-        print("3. 获取 Key：https://platform.deepseek.com/api_keys")
-        print("=" * 50)
+        print("=" * 50, flush=True)
+        print("[WARN] 未配置 DEEPSEEK_API_KEY！", flush=True)
+        print("请复制 .env.example 为 .env 并填入 Key", flush=True)
+        print("=" * 50, flush=True)
 
-    # ── 创建 Tkinter 根窗口（隐藏） ──
+    # Tkinter 根窗口（隐藏）
     root = tk.Tk()
-    root.withdraw()  # 隐藏主窗口，只有悬浮窗/Toplevel 可见
+    root.withdraw()
     root.title("划词助手")
 
-    # ── 初始化悬浮窗管理器 ──
-    floating_window = FloatingWindow(root)
+    # 悬浮窗
+    window = FloatingWindow(root)
 
-    # ── 启动系统托盘（独立线程） ──
-    tray_thread = threading.Thread(
-        target=_run_tray, name="TrayThread", daemon=True
-    )
+    # 剪贴板监听
+    monitor = ClipboardMonitor(on_text=_on_clipboard_change)
+
+    # 悬浮窗回调
+    window.set_on_mode_switch(_make_mode_switch_handler(window))
+    window.set_on_retry(_make_retry_handler(window))
+    window.set_on_copy(lambda text: monitor.mark_as_seen(text))
+
+    # 系统托盘
+    tray_thread = threading.Thread(target=_run_tray, name="Tray", daemon=True)
     tray_thread.start()
 
-    # ── 注册全局热键 ──
-    try:
-        keyboard.add_hotkey(
-            Config.TRANSLATE_HOTKEY,
-            lambda: _handle_translate(root, floating_window),
-            suppress=False,  # 不吞掉按键，允许其他程序正常响应
-        )
-        keyboard.add_hotkey(
-            Config.ASK_HOTKEY,
-            lambda: _handle_ask(root, floating_window),
-            suppress=False,
-        )
-        print(f"✅ 划词助手已启动")
-        print(f"   翻译：{Config.TRANSLATE_HOTKEY}")
-        print(f"   提问：{Config.ASK_HOTKEY}")
-        print(f"   右键托盘图标可退出")
-    except Exception as e:
-        print(f"❌ 注册全局热键失败：{e}")
-        print("   请确认没有其他程序占用相同快捷键。")
+    # 工作线程
+    worker_thread = threading.Thread(
+        target=_worker, args=(root, window), name="Worker", daemon=True,
+    )
+    worker_thread.start()
 
-    # ── 启动退出检查 ──
-    _schedule_exit_check(root)
+    # 启动剪贴板监听
+    monitor.start()
 
-    # ── 进入 Tkinter 主循环（阻塞，直到 root.destroy()） ──
+    print("[OK] 划词助手已启动（剪贴板监听模式）", flush=True)
+    print("   复制任意文字（Ctrl+C）即可触发翻译", flush=True)
+    print("   右键托盘图标可退出", flush=True)
+
+    # 主循环定期检查
+    _schedule_main_loop(root, window, monitor)
+
     try:
         root.mainloop()
     except KeyboardInterrupt:
         pass
     finally:
-        keyboard.unhook_all()
-        print("👋 划词助手已退出")
+        _exit_flag.set()
+        monitor.stop()
+        print("[BYE] 划词助手已退出", flush=True)
 
 
 if __name__ == "__main__":

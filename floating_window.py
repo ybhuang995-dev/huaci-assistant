@@ -1,263 +1,328 @@
 """
 悬浮窗 UI 模块
 -------------
-基于 tkinter 的无边框、置顶悬浮窗，用于显示翻译/问答结果。
-
-功能：
-- 无边框 + 置顶显示
-- 标题栏可拖拽移动
-- 滚动文本区域（只读）
-- Esc 关闭 / Enter 复制结果
-- Catppuccin Mocha 暗色主题
+借鉴 OpenAI Translator 的设计：
+- 模式标签栏（翻译 | 提问 | 润色 | 总结），点击切换模式
+- 原文预览区
+- 结果显示区（滚动）
+- 底部操作栏（复制 / 重试 / 关闭）
+- 无边框 + 置顶 + 可拖拽
 """
 
 import tkinter as tk
-from tkinter import font as tkfont
+from config import MODES, MODE_TITLES, DEFAULT_MODE
+
+FONT = "Microsoft YaHei UI"
+
+# Catppuccin Mocha 暗色主题
+C = {
+    "bg": "#1e1e2e",
+    "surface": "#181825",
+    "text": "#cdd6f4",
+    "subtext": "#6c7086",
+    "accent": "#89b4fa",        # 蓝 — 翻译
+    "accent_green": "#a6e3a1",  # 绿 — 润色
+    "accent_purple": "#cba6f7", # 紫 — 提问
+    "accent_yellow": "#f9e2af", # 黄 — 总结
+    "hover": "#f38ba8",
+    "scroll_bg": "#313244",
+    "tab_active": "#313244",
+    "tab_inactive": "#181825",
+}
+
+# 模式对应的强调色
+MODE_ACCENT = {
+    "translate": C["accent"],
+    "ask": C["accent_purple"],
+    "polish": C["accent_green"],
+    "summarize": C["accent_yellow"],
+}
 
 
 class FloatingWindow:
-    """翻译/问答结果悬浮窗"""
+    """
+    翻译 / AI 结果悬浮窗。
+
+    窗口结构：
+    ┌─────────────────────────────────┐
+    │ [翻译] [提问] [润色] [总结]  [✕]│  ← 模式标签栏
+    ├─────────────────────────────────┤
+    │ 原文：Hello world...            │  ← 原文预览（单行）
+    ├─────────────────────────────────┤
+    │                                 │
+    │ 你好，世界！                     │  ← 结果区域（滚动）
+    │                                 │
+    ├─────────────────────────────────┤
+    │ [📋 复制]  [🔄 重试]  Esc 关闭  │  ← 操作栏
+    └─────────────────────────────────┘
+    """
 
     def __init__(self, root: tk.Tk):
-        """
-        Args:
-            root: tkinter 根窗口（隐藏），用于承载 Toplevel
-        """
         self.root = root
         self.window: tk.Toplevel | None = None
-        self.result_text = ""
         self._drag_x = 0
         self._drag_y = 0
 
-        # ── 配色方案：Catppuccin Mocha ────────────────────
-        self.colors = {
-            "bg": "#1e1e2e",           # 窗口背景
-            "title_bg": "#181825",      # 标题栏背景
-            "text_bg": "#1e1e2e",       # 文本区背景
-            "text_fg": "#cdd6f4",       # 文本前景
-            "accent": "#89b4fa",        # 强调色（蓝）
-            "status_bg": "#181825",      # 状态栏背景
-            "status_fg": "#6c7086",     # 状态栏文字
-            "close_hover": "#f38ba8",   # 关闭按钮悬停色
-            "scroll_bg": "#313244",     # 滚动条背景
-        }
+        # 状态
+        self.current_mode = DEFAULT_MODE
+        self.original_text = ""
+        self.result_text = ""
 
-    # ── 公共 API ────────────────────────────────────────────
+        # 回调（由 main.py 设置）
+        self._on_mode_switch: callable | None = None
+        self._on_retry: callable | None = None
+        self._on_copy: callable | None = None
 
-    def show(
-        self, title: str, text: str, x: int = None, y: int = None
-    ) -> None:
+    # ── 公共 API ────────────────────────────────────────
+
+    def show(self, text: str, result: str = "", mode: str = None,
+             x: int = None, y: int = None) -> None:
         """
         显示 / 刷新悬浮窗。
 
-        每次调用会先销毁旧窗口，再创建新窗口。这样保证了：
-        - 多次热键触发不会产生多个窗口
-        - "加载中..." 到最终结果可以平滑过渡
-
         Args:
-            title: 标题栏文字（如 "🈳 翻译"）
-            text: 要显示的内容
-            x: 窗口左上角 X 坐标（None 则跟随鼠标）
-            y: 窗口左上角 Y 坐标（None 则跟随鼠标）
+            text: 用户复制的原文
+            result: 初始结果（可为空，表示加载中）
+            mode: 初始模式（默认 translate）
+            x, y: 窗口位置
         """
-        # 先清理旧窗口
         self.hide()
+        self.original_text = text
+        self.result_text = result
+        if mode is not None:
+            self.current_mode = mode
 
-        self.result_text = text
-
-        # ── 创建无边框窗口 ──
         self.window = tk.Toplevel(self.root)
-        self.window.overrideredirect(True)   # 去掉系统标题栏
-        self.window.attributes("-topmost", True)  # 始终置顶
+        self.window.overrideredirect(True)
+        self.window.attributes("-topmost", True)
 
-        # 窗口尺寸
-        width, height = 520, 380
-
-        # 默认位置：鼠标附近居中
+        w, h = 500, 400
         if x is None or y is None:
-            x = self.window.winfo_pointerx() - width // 2
+            x = self.window.winfo_pointerx() - w // 2
             y = self.window.winfo_pointery() + 20
+        sw = self.window.winfo_screenwidth()
+        sh = self.window.winfo_screenheight()
+        x = max(0, min(x, sw - w))
+        y = max(0, min(y, sh - h))
 
-        # 确保窗口不超出屏幕
-        screen_w = self.window.winfo_screenwidth()
-        screen_h = self.window.winfo_screenheight()
-        x = max(0, min(x, screen_w - width))
-        y = max(0, min(y, screen_h - height))
+        self.window.geometry(f"{w}x{h}+{x}+{y}")
+        self.window.configure(bg=C["bg"])
 
-        self.window.geometry(f"{width}x{height}+{x}+{y}")
-        self.window.configure(bg=self.colors["bg"])
+        self._build_tab_bar()
+        self._build_original_preview()
+        self._build_result_area()
+        self._build_action_bar()
 
-        # ── 构建三块区域 ──
-        self._build_title_bar(title)
-        self._build_text_area()
-        self._build_status_bar()
-
-        # ── 全局快捷键（绑定到窗口） ──
+        # 快捷键
         self.window.bind("<Escape>", lambda e: self.hide())
-        self.window.bind("<Return>", lambda e: self._copy_result())
-        # 注意：不绑定 FocusOut 自动关闭，让用户主动按 Esc
-
+        self.window.bind("<Control-Return>", lambda e: self._copy_result())
         self.window.focus_force()
 
+    def update_result(self, result: str) -> None:
+        """更新结果区域（API 返回后调用）"""
+        self.result_text = result
+        if self.window is None:
+            return
+        try:
+            self.result_area.configure(state=tk.NORMAL)
+            self.result_area.delete("1.0", tk.END)
+            self.result_area.insert("1.0", result)
+            self.result_area.configure(state=tk.DISABLED)
+        except tk.TclError:
+            pass
+
+    def set_on_mode_switch(self, callback: callable) -> None:
+        """设置模式切换回调：callback(mode_key)"""
+        self._on_mode_switch = callback
+
+    def set_on_retry(self, callback: callable) -> None:
+        """设置重试回调：callback()"""
+        self._on_retry = callback
+
+    def set_on_copy(self, callback: callable) -> None:
+        """设置复制回调：callback(text) — 传入被复制的结果文本"""
+        self._on_copy = callback
+
     def hide(self, event=None) -> None:
-        """关闭悬浮窗"""
         if self.window:
             try:
                 self.window.destroy()
             except tk.TclError:
-                pass  # 窗口已经被销毁
+                pass
             self.window = None
 
-    # ── UI 构建子方法 ─────────────────────────────────────
+    # ── 标签栏 ──────────────────────────────────────────
 
-    def _build_title_bar(self, title: str) -> None:
-        """构建标题栏：图标 + 标题文字 + 关闭按钮"""
-        bar = tk.Frame(self.window, bg=self.colors["title_bg"], height=38)
+    def _build_tab_bar(self) -> None:
+        """构建模式标签栏：[翻译] [提问] [润色] [总结] [✕]"""
+        bar = tk.Frame(self.window, bg=C["surface"], height=36)
         bar.pack(fill=tk.X, side=tk.TOP)
-        bar.pack_propagate(False)  # 保持固定高度
+        bar.pack_propagate(False)
 
-        # 标题标签
-        title_lbl = tk.Label(
-            bar,
-            text=f"  {title}",
-            bg=self.colors["title_bg"],
-            fg=self.colors["accent"],
-            font=("Microsoft YaHei UI", 11, "bold"),
-            anchor="w",
-        )
-        title_lbl.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(12, 0))
+        self._tab_widgets = {}
+
+        for mode_key in MODES:
+            label_text = MODES[mode_key]["label"]
+            tab = tk.Label(
+                bar, text=label_text,
+                bg=C["tab_inactive"], fg=C["subtext"],
+                font=(FONT, 10), padx=12, pady=6,
+                cursor="hand2",
+            )
+            tab.pack(side=tk.LEFT, padx=(4, 0), pady=4)
+            tab.bind("<Button-1>", lambda e, m=mode_key: self._switch_mode(m))
+            # 悬停效果
+            tab.bind("<Enter>", lambda e, t=tab: t.configure(bg=C["tab_active"], fg=C["text"]))
+            tab.bind("<Leave>", lambda e, t=tab, m=mode_key: self._restyle_tab(t, m))
+            self._tab_widgets[mode_key] = tab
 
         # 关闭按钮
-        close_btn = tk.Button(
-            bar,
-            text="✕",
-            bg=self.colors["title_bg"],
-            fg=self.colors["text_fg"],
-            font=("Microsoft YaHei UI", 14),
-            bd=0,
-            activebackground=self.colors["close_hover"],
-            activeforeground="#1e1e2e",
-            cursor="hand2",
-            command=self.hide,
+        close = tk.Button(bar, text="✕", bg=C["surface"], fg=C["subtext"],
+                          font=(FONT, 12), bd=0, cursor="hand2",
+                          activebackground=C["hover"], activeforeground="#1e1e2e",
+                          command=self.hide)
+        close.pack(side=tk.RIGHT, padx=6, pady=2)
+
+        # 高亮当前模式
+        self._highlight_active_tab()
+
+        # 拖拽：标题栏
+        bar.bind("<Button-1>", self._start_drag)
+        bar.bind("<B1-Motion>", self._drag)
+
+    def _switch_mode(self, mode_key: str) -> None:
+        """切换模式标签"""
+        if mode_key == self.current_mode:
+            return
+        self.current_mode = mode_key
+        self._highlight_active_tab()
+
+        # 显示加载状态
+        self.update_result("⏳ 正在处理，请稍候...")
+
+        # 通知外部（main.py 会重新调用 API）
+        if self._on_mode_switch:
+            self._on_mode_switch(mode_key)
+
+    def _highlight_active_tab(self) -> None:
+        """高亮当前激活的标签"""
+        for mk, tab in self._tab_widgets.items():
+            self._restyle_tab(tab, mk)
+
+    def _restyle_tab(self, tab: tk.Label, mode_key: str) -> None:
+        """根据模式状态设置标签样式"""
+        if mode_key == self.current_mode:
+            accent = MODE_ACCENT.get(mode_key, C["accent"])
+            tab.configure(bg=C["tab_active"], fg=accent)
+        else:
+            tab.configure(bg=C["tab_inactive"], fg=C["subtext"])
+
+    # ── 原文预览 ────────────────────────────────────────
+
+    def _build_original_preview(self) -> None:
+        """构建原文预览行"""
+        frame = tk.Frame(self.window, bg=C["bg"], height=28)
+        frame.pack(fill=tk.X, side=tk.TOP, padx=10, pady=(2, 0))
+        frame.pack_propagate(False)
+
+        preview = self.original_text[:60] + "…" if len(self.original_text) > 60 else self.original_text
+        # 去掉换行符，单行显示
+        preview = preview.replace("\n", " ↵ ")
+
+        self.preview_label = tk.Label(
+            frame, text=f"原文：{preview}",
+            bg=C["bg"], fg=C["subtext"], font=(FONT, 9), anchor="w",
         )
-        close_btn.pack(side=tk.RIGHT, padx=2, pady=2)
+        self.preview_label.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # —— 拖拽支持：在标题栏上按住鼠标左键可移动窗口 ——
-        for widget in (bar, title_lbl):
-            widget.bind("<Button-1>", self._start_drag)
-            widget.bind("<B1-Motion>", self._drag)
+    # ── 结果区域 ────────────────────────────────────────
 
-    def _build_text_area(self) -> None:
-        """构建带滚动条的结果文本显示区"""
-        container = tk.Frame(self.window, bg=self.colors["text_bg"])
-        container.pack(fill=tk.BOTH, expand=True, padx=2, pady=1)
+    def _build_result_area(self) -> None:
+        """构建滚动结果区域"""
+        container = tk.Frame(self.window, bg=C["bg"])
+        container.pack(fill=tk.BOTH, expand=True, padx=2, pady=(2, 0))
 
-        # 文本区域
-        self.text_widget = tk.Text(
-            container,
-            bg=self.colors["text_bg"],
-            fg=self.colors["text_fg"],
-            insertbackground=self.colors["text_fg"],  # 光标颜色
-            font=("Microsoft YaHei UI", 11),
-            wrap=tk.WORD,                    # 按词换行
-            bd=0,
-            padx=16,
-            pady=12,
-            selectbackground="#585b70",
-            selectforeground=self.colors["text_fg"],
+        self.result_area = tk.Text(
+            container, bg=C["bg"], fg=C["text"],
+            insertbackground=C["text"], font=(FONT, 11),
+            wrap=tk.WORD, bd=0, padx=14, pady=10,
+            selectbackground="#585b70", selectforeground=C["text"],
             relief=tk.FLAT,
-            state=tk.NORMAL,
         )
-        self.text_widget.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
-
-        # 插入文本内容
-        self.text_widget.insert("1.0", self.result_text)
-        self.text_widget.configure(state=tk.DISABLED)  # 设为只读
+        self.result_area.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
 
         # 滚动条
-        scrollbar = tk.Scrollbar(
-            container,
-            command=self.text_widget.yview,
-            bg=self.colors["scroll_bg"],
-            troughcolor=self.colors["bg"],
-            activebackground=self.colors["status_fg"],
-        )
-        scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
-        self.text_widget.configure(yscrollcommand=scrollbar.set)
+        sb = tk.Scrollbar(container, command=self.result_area.yview,
+                          bg=C["scroll_bg"], troughcolor=C["bg"],
+                          activebackground=C["subtext"])
+        sb.pack(fill=tk.Y, side=tk.RIGHT)
+        self.result_area.configure(yscrollcommand=sb.set)
 
-    def _build_status_bar(self) -> None:
-        """构建底部状态栏：显示快捷键提示"""
-        bar = tk.Frame(self.window, bg=self.colors["status_bg"], height=30)
+        # 插入初始内容
+        if self.result_text:
+            self.result_area.insert("1.0", self.result_text)
+        self.result_area.configure(state=tk.DISABLED)
+
+    # ── 操作栏 ──────────────────────────────────────────
+
+    def _build_action_bar(self) -> None:
+        """构建底部操作栏"""
+        bar = tk.Frame(self.window, bg=C["surface"], height=34)
         bar.pack(fill=tk.X, side=tk.BOTTOM)
         bar.pack_propagate(False)
 
-        lbl = tk.Label(
-            bar,
-            text="  Esc 关闭  |  Enter 复制结果  |  拖拽标题栏可移动窗口",
-            bg=self.colors["status_bg"],
-            fg=self.colors["status_fg"],
-            font=("Microsoft YaHei UI", 9),
-            anchor="w",
-        )
-        lbl.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10)
+        btn_frame = tk.Frame(bar, bg=C["surface"])
+        btn_frame.pack(side=tk.LEFT, padx=8)
 
-    # ── 交互逻辑 ──────────────────────────────────────────
+        # 复制按钮
+        copy_btn = tk.Button(
+            btn_frame, text="📋 复制", bg=C["surface"], fg=C["text"],
+            font=(FONT, 9), bd=0, cursor="hand2", padx=8,
+            activebackground=C["tab_active"], activeforeground=C["accent"],
+            command=self._copy_result,
+        )
+        copy_btn.pack(side=tk.LEFT, padx=(0, 4))
+
+        # 重试按钮
+        retry_btn = tk.Button(
+            btn_frame, text="🔄 重试", bg=C["surface"], fg=C["text"],
+            font=(FONT, 9), bd=0, cursor="hand2", padx=8,
+            activebackground=C["tab_active"], activeforeground=C["accent"],
+            command=self._retry,
+        )
+        retry_btn.pack(side=tk.LEFT, padx=(0, 4))
+
+        # 快捷键提示
+        hint = tk.Label(bar, text="Esc 关闭  |  Enter 复制",
+                        bg=C["surface"], fg=C["subtext"], font=(FONT, 9))
+        hint.pack(side=tk.RIGHT, padx=10)
+
+    # ── 交互 ────────────────────────────────────────────
 
     def _copy_result(self) -> None:
-        """将结果显示文本复制到剪贴板"""
+        """复制结果到剪贴板"""
         if self.result_text:
             self.root.clipboard_clear()
             self.root.clipboard_append(self.result_text)
-            # 短暂闪烁状态栏作为反馈
-            self._flash_feedback()
+            # 通知监视器：这是我主动写入的，别当成新内容触发弹窗
+            if self._on_copy:
+                self._on_copy(self.result_text)
 
-    def _flash_feedback(self) -> None:
-        """
-        复制成功的视觉反馈：标题栏短暂变色后恢复。
+    def _retry(self) -> None:
+        """重试当前模式"""
+        self.update_result("⏳ 正在重新处理，请稍候...")
+        if self._on_retry:
+            self._on_retry()
 
-        原理：利用 tkinter 的 after 方法实现延迟调用。
-        100ms 后恢复背景色，给用户一个"已确认"的微交互。
-        """
-        if not self.window:
-            return
-
-        # 找到所有子控件中的标题栏和状态栏
-        for child in self.window.winfo_children():
-            if isinstance(child, tk.Frame):
-                # 检查是否为状态栏（通过高度判断）
-                try:
-                    if child.winfo_height() <= 32:
-                        # 找到状态栏中的 Label
-                        for sub in child.winfo_children():
-                            if isinstance(sub, tk.Label):
-                                original_text = sub.cget("text")
-                                sub.configure(
-                                    text="  ✅ 已复制到剪贴板！",
-                                    fg="#a6e3a1",  # 绿色
-                                )
-                                # 1.5 秒后恢复
-                                self.window.after(
-                                    1500,
-                                    lambda: sub.configure(
-                                        text=original_text,
-                                        fg=self.colors["status_fg"],
-                                    ),
-                                )
-                except Exception:
-                    pass
-
-    # ── 窗口拖拽 ──────────────────────────────────────────
+    # ── 拖拽 ────────────────────────────────────────────
 
     def _start_drag(self, event) -> None:
-        """记录拖拽起始偏移"""
         self._drag_x = event.x
         self._drag_y = event.y
 
     def _drag(self, event) -> None:
-        """拖拽移动窗口"""
         if self.window:
-            dx = event.x - self._drag_x
-            dy = event.y - self._drag_y
-            x = self.window.winfo_x() + dx
-            y = self.window.winfo_y() + dy
-            self.window.geometry(f"+{x}+{y}")
+            self.window.geometry(
+                f"+{self.window.winfo_x() + event.x - self._drag_x}"
+                f"+{self.window.winfo_y() + event.y - self._drag_y}"
+            )

@@ -85,6 +85,10 @@ class FloatingWindow:
         # 追问气泡
         self._bubble: tk.Toplevel | None = None
 
+        # 分支树侧边栏
+        self._sidebar_visible = False
+        self._sidebar_text: tk.Text | None = None
+
     # ── 辅助方法 ────────────────────────────────────────
 
     @staticmethod
@@ -181,6 +185,9 @@ class FloatingWindow:
             self._tab_widgets = None
             self.preview_label = None
             self.result_area = None
+            self._sidebar_text = None
+            self._sidebar_btn = None
+            self._sidebar_visible = False
 
     # ── 标签栏 ──────────────────────────────────────────
 
@@ -275,9 +282,31 @@ class FloatingWindow:
     # ── 结果区域 ────────────────────────────────────────
 
     def _build_result_area(self) -> None:
-        """构建滚动结果区域"""
-        container = tk.Frame(self._inner, bg=C["bg"])
-        container.pack(fill=tk.BOTH, expand=True, padx=2, pady=(2, 0))
+        """构建滚动结果区域 + 可折叠侧边栏"""
+        # 外层水平容器：侧边栏 | 结果区
+        outer = tk.Frame(self._inner, bg=C["bg"])
+        outer.pack(fill=tk.BOTH, expand=True, padx=2, pady=(2, 0))
+
+        # ── 侧边栏（默认隐藏） ──
+        self._sidebar_frame = tk.Frame(outer, bg=C["surface"], width=180)
+        # 不 pack，由 _toggle_sidebar 控制
+
+        self._sidebar_text = tk.Text(
+            self._sidebar_frame, bg=C["surface"], fg=C["text"],
+            font=(FONT, 9), wrap=tk.NONE, bd=0, padx=8, pady=6,
+            cursor="hand2", relief=tk.FLAT, state=tk.DISABLED,
+            selectbackground=C["border"],
+        )
+        self._sidebar_text.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+
+        sb_side = tk.Scrollbar(self._sidebar_frame, command=self._sidebar_text.yview,
+                               bg=C["scroll_bg"], troughcolor=C["surface"])
+        sb_side.pack(fill=tk.Y, side=tk.RIGHT)
+        self._sidebar_text.configure(yscrollcommand=sb_side.set)
+
+        # ── 结果区 ──
+        container = tk.Frame(outer, bg=C["bg"])
+        container.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
 
         self.result_area = tk.Text(
             container, bg=C["bg"], fg=C["text"],
@@ -324,6 +353,15 @@ class FloatingWindow:
             command=self._copy_result,
         )
         copy_btn.pack(side=tk.LEFT, padx=(0, 4))
+
+        # 分支树侧边栏按钮
+        self._sidebar_btn = tk.Button(
+            btn_frame, text="📂 分支树", bg=C["surface"], fg=C["text"],
+            font=(FONT, 9), bd=0, cursor="hand2", padx=8,
+            activebackground=C["border"], activeforeground=C["accent"],
+            command=self._toggle_sidebar,
+        )
+        self._sidebar_btn.pack(side=tk.LEFT, padx=(0, 4))
 
         # 重试按钮
         retry_btn = tk.Button(
@@ -417,6 +455,11 @@ class FloatingWindow:
                                            foreground=C["subtext"])
 
             for node in self._tree_nodes:
+                # 设置跳转标记（在插入前记录位置）
+                mark = f"n{node['id']}"
+                self.result_area.mark_set(mark, tk.END)
+                self.result_area.mark_gravity(mark, tk.LEFT)
+
                 # 计算树连接线前缀
                 prefix = self._compute_prefix(node)
 
@@ -447,6 +490,10 @@ class FloatingWindow:
         except tk.TclError:
             pass
 
+        # 侧边栏可见时同步刷新
+        if self._sidebar_visible:
+            self._render_sidebar()
+
     def _compute_prefix(self, node: dict) -> str:
         """计算树连接线前缀"""
         if node["depth"] == 0:
@@ -472,6 +519,100 @@ class FloatingWindow:
                 # 祖先层级
                 prefix += "   " if is_last else "│  "
         return prefix
+
+    # ── 分支树侧边栏 ──────────────────────────────────
+
+    def _toggle_sidebar(self) -> None:
+        """切换侧边栏显示/隐藏"""
+        self._sidebar_visible = not self._sidebar_visible
+        if self._sidebar_visible:
+            # 拿到容器（outer 的第一个子控件），侧边栏放在它左边
+            siblings = self._sidebar_frame.master.winfo_children()
+            if siblings:
+                self._sidebar_frame.pack(fill=tk.Y, side=tk.LEFT,
+                                         before=siblings[0])
+            else:
+                self._sidebar_frame.pack(fill=tk.Y, side=tk.LEFT)
+            self._render_sidebar()
+        else:
+            self._sidebar_frame.pack_forget()
+
+        # 更新按钮文字
+        self._update_sidebar_btn()
+
+    def _update_sidebar_btn(self) -> None:
+        """更新侧边栏按钮文字"""
+        if hasattr(self, "_sidebar_btn") and self._sidebar_btn is not None:
+            try:
+                self._sidebar_btn.configure(
+                    text="📂 关闭分支" if self._sidebar_visible else "📂 分支树")
+            except tk.TclError:
+                pass
+
+    def _render_sidebar(self) -> None:
+        """渲染侧边栏树形列表"""
+        if self._sidebar_text is None:
+            return
+        try:
+            self._sidebar_text.configure(state=tk.NORMAL)
+            self._sidebar_text.delete("1.0", tk.END)
+
+            self._sidebar_text.tag_configure("node_label",
+                                             font=(FONT, 9), foreground=C["text"])
+            self._sidebar_text.tag_configure("node_label_active",
+                                             font=(FONT, 9, "bold"),
+                                             foreground=C["accent"],
+                                             background=C["bg"])
+            self._sidebar_text.tag_configure("node_label_root",
+                                             font=(FONT, 9, "bold"),
+                                             foreground=C["text"])
+
+            if not self._tree_nodes:
+                self._sidebar_text.configure(state=tk.DISABLED)
+                return
+
+            for node in self._tree_nodes:
+                depth = node["depth"]
+                mode_label = MODES.get(node["mode"], {}).get("label", "")
+                text_preview = node["text"][:28] + "…" if len(node["text"]) > 28 else node["text"]
+                indent = "  " * depth
+                marker = "└ " if node.get("is_last") else "├ " if depth > 0 else ""
+
+                if node["type"] == "query":
+                    label = f"{indent}{marker}📝 {mode_label}: {text_preview}\n"
+                else:
+                    label = f"{indent}{marker}💬 追问: {text_preview}\n"
+
+                tag = "node_label_root" if depth == 0 else "node_label"
+                self._sidebar_text.insert(tk.END, label, tag)
+
+                # 绑定点击跳转（用闭包捕获 node_id）
+                line_start = self._sidebar_text.index(tk.END + "-2l")
+                line_end = self._sidebar_text.index(tk.END + "-1c")
+                self._sidebar_text.tag_add(f"side_{node['id']}", line_start, line_end)
+                self._sidebar_text.tag_bind(
+                    f"side_{node['id']}", "<Button-1>",
+                    lambda e, nid=node["id"]: self._jump_to_node(nid))
+                self._sidebar_text.tag_bind(
+                    f"side_{node['id']}", "<Enter>",
+                    lambda e, t=f"side_{node['id']}":
+                        self._sidebar_text.tag_configure(t, background=C["border"]))
+                self._sidebar_text.tag_bind(
+                    f"side_{node['id']}", "<Leave>",
+                    lambda e, t=f"side_{node['id']}":
+                        self._sidebar_text.tag_configure(t, background=""))
+
+            self._sidebar_text.configure(state=tk.DISABLED)
+        except tk.TclError:
+            pass
+
+    def _jump_to_node(self, node_id: int) -> None:
+        """跳转到结果区中的指定节点"""
+        mark = f"n{node_id}"
+        try:
+            self.result_area.see(mark)
+        except tk.TclError:
+            pass
 
     # ── 追问（选中结果文字 → 气泡弹窗） ──────────────
 

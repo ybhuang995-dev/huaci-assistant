@@ -59,6 +59,8 @@ def _read_clipboard() -> str:
 
         try:
             result = ctypes.wstring_at(p_data)
+            # 标准化：去掉 null 字符和空白（统一在 I/O 边界处理）
+            result = result.rstrip("\x00").strip()
             return result
         finally:
             _kernel32.GlobalUnlock(h_data)
@@ -113,6 +115,8 @@ class ClipboardMonitor:
 
     def mark_as_seen(self, text: str) -> None:
         """标记文本为'已见'，避免重复触发"""
+        # 标准化，与 _read_clipboard 的输出保持一致
+        text = text.rstrip("\x00").strip()
         self._last_text = text
         self._last_triggered = text
         _log(f"mark_as_seen: [{text[:60]}]")
@@ -121,18 +125,13 @@ class ClipboardMonitor:
         _log("poll loop started")
         while self._running:
             try:
-                raw = _read_clipboard()
+                text = _read_clipboard()
             except Exception as e:
                 _log(f"poll: read error: {e}")
                 time.sleep(Config.POLL_INTERVAL)
                 continue
 
-            # ── 标准化文本（去 null 字符 + strip） ──────────
-            # 有些应用复制时剪贴板会带尾随空字符/换行，
-            # 两次读取之间可能有微小差异，导致去重失效。
-            text = raw.rstrip("\x00").strip()
-
-            # 去重：没变化（用标准化后的文本比较）
+            # 去重：没变化（文本已在 _read_clipboard 中标准化）
             if text == self._last_text:
                 time.sleep(Config.POLL_INTERVAL)
                 continue

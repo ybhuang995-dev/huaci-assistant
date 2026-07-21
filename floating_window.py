@@ -61,6 +61,10 @@ class FloatingWindow:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.window: tk.Toplevel | None = None
+        self._inner: tk.Frame | None = None
+        self._tab_widgets: dict | None = None
+        self.preview_label: tk.Label | None = None
+        self.result_area: tk.Text | None = None
         self._drag_x = 0
         self._drag_y = 0
 
@@ -73,6 +77,14 @@ class FloatingWindow:
         self._on_mode_switch: callable | None = None
         self._on_retry: callable | None = None
         self._on_copy: callable | None = None
+
+    # ── 辅助方法 ────────────────────────────────────────
+
+    @staticmethod
+    def _add_separator(parent: tk.Widget, side: str) -> None:
+        """添加 1px 分隔线"""
+        sep = tk.Frame(parent, bg=C["border"], height=1)
+        sep.pack(fill=tk.X, side=side)
 
     # ── 公共 API ────────────────────────────────────────
 
@@ -155,6 +167,10 @@ class FloatingWindow:
             except tk.TclError:
                 pass
             self.window = None
+            self._inner = None
+            self._tab_widgets = None
+            self.preview_label = None
+            self.result_area = None
 
     # ── 标签栏 ──────────────────────────────────────────
 
@@ -192,8 +208,7 @@ class FloatingWindow:
         self._highlight_active_tab()
 
         # 标签栏下方分隔线
-        sep = tk.Frame(self._inner, bg=C["border"], height=1)
-        sep.pack(fill=tk.X, side=tk.TOP)
+        self._add_separator(self._inner, tk.TOP)
 
         # 拖拽：标题栏
         bar.bind("<Button-1>", self._start_drag)
@@ -281,8 +296,7 @@ class FloatingWindow:
         bar.pack_propagate(False)
 
         # 操作栏上方分隔线（pack 在 bar 之后 → 在 bar 上方）
-        sep = tk.Frame(self._inner, bg=C["border"], height=1)
-        sep.pack(fill=tk.X, side=tk.BOTTOM)
+        self._add_separator(self._inner, tk.BOTTOM)
 
         btn_frame = tk.Frame(bar, bg=C["surface"])
         btn_frame.pack(side=tk.LEFT, padx=8)
@@ -291,7 +305,7 @@ class FloatingWindow:
         copy_btn = tk.Button(
             btn_frame, text="📋 复制", bg=C["surface"], fg=C["text"],
             font=(FONT, 9), bd=0, cursor="hand2", padx=8,
-            activebackground="#e5e7eb", activeforeground=C["accent"],
+            activebackground=C["border"], activeforeground=C["accent"],
             command=self._copy_result,
         )
         copy_btn.pack(side=tk.LEFT, padx=(0, 4))
@@ -300,7 +314,7 @@ class FloatingWindow:
         retry_btn = tk.Button(
             btn_frame, text="🔄 重试", bg=C["surface"], fg=C["text"],
             font=(FONT, 9), bd=0, cursor="hand2", padx=8,
-            activebackground="#e5e7eb", activeforeground=C["accent"],
+            activebackground=C["border"], activeforeground=C["accent"],
             command=self._retry,
         )
         retry_btn.pack(side=tk.LEFT, padx=(0, 4))

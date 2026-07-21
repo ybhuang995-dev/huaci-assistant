@@ -112,7 +112,7 @@ engine = DeepSeekEngine()
 **关键设计决策**：
 - **双队列**：`_clip_queue`（剪贴板事件 → 主线程处理）和 `_work_queue`（API 查询 → 工作线程处理）分离，避免早期单队列导致的互相干扰 bug
 - **查询计数器**：`_query_counter` 全局递增，每次新查询 +1。Worker 返回结果时检查 `query_id`，如果已有更新查询则丢弃旧结果，防止过期结果覆盖新内容
-- **三层去重**：① 监听器层（标准化文本 `==` 比较）② 回调层（`_last_callback_text`）③ `mark_as_seen()`（主动复制结果时标记，避免自己写入剪贴板触发弹窗）
+- **两层去重**：① 监听器层（`_read_clipboard` 在 I/O 边界标准化文本 + `_last_text`/`_last_triggered` 比较）② `mark_as_seen()`（主动复制结果时标记，避免自己写入剪贴板触发弹窗）
 
 ## 对标项目
 
@@ -172,7 +172,6 @@ engine = DeepSeekEngine()
 - ✅ 写代码、运行、调试
 - ✅ 安装依赖（pip install）
 - ✅ 读参考项目源码学习思路
-- ❌ 不照搬参考项目的代码（理解后自己实现）
 - ❌ 不做浏览器插件、不做移动端
 
 ## 项目结构
@@ -195,5 +194,4 @@ engine = DeepSeekEngine()
 ## 输出风格
 
 - 每个 phase 开始前先讲设计思路，再写代码
-- 代码同步解释原理（主人在学 Python）
 - 改完就跑通验证

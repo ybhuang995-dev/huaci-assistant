@@ -71,7 +71,10 @@ class FloatingWindow:
         # 状态
         self.current_mode = DEFAULT_MODE
         self.original_text = ""
-        self.result_text = ""
+
+        # 对话树
+        self._tree_nodes: list[dict] = []  # [{id, type, text, result, mode, parent_id, depth, is_last}]
+        self._next_node_id = 0
 
         # 回调（由 main.py 设置）
         self._on_mode_switch: callable | None = None
@@ -105,9 +108,13 @@ class FloatingWindow:
         """
         self.hide()
         self.original_text = text
-        self.result_text = result
         if mode is not None:
             self.current_mode = mode
+
+        # 初始化对话树：根节点
+        self._tree_nodes = []
+        self._next_node_id = 0
+        self._add_node("query", text, result, mode or self.current_mode)
 
         self.window = tk.Toplevel(self.root)
         self.window.overrideredirect(True)
@@ -140,17 +147,11 @@ class FloatingWindow:
         self.window.focus_force()
 
     def update_result(self, result: str) -> None:
-        """更新结果区域（API 返回后调用）"""
-        self.result_text = result
-        if self.window is None:
-            return
-        try:
-            self.result_area.configure(state=tk.NORMAL)
-            self.result_area.delete("1.0", tk.END)
-            self.result_area.insert("1.0", result)
-            self.result_area.configure(state=tk.DISABLED)
-        except tk.TclError:
-            pass
+        """更新最后一个节点的结果（API 返回后调用）"""
+        if self._tree_nodes:
+            self._tree_nodes[-1]["result"] = result
+        if self.window is not None:
+            self._render_tree()
 
     def set_on_mode_switch(self, callback: callable) -> None:
         """设置模式切换回调：callback(mode_key)"""
@@ -224,14 +225,17 @@ class FloatingWindow:
         bar.bind("<B1-Motion>", self._drag)
 
     def _switch_mode(self, mode_key: str) -> None:
-        """切换模式标签"""
+        """切换模式标签 —— 清空树，用新模式重新查询"""
         if mode_key == self.current_mode:
             return
         self.current_mode = mode_key
         self._highlight_active_tab()
 
-        # 显示加载状态
-        self.update_result("⏳ 正在处理，请稍候...")
+        # 清空树，新建根节点
+        self._tree_nodes = []
+        self._next_node_id = 0
+        self._add_node("query", self.original_text, "⏳ 正在处理，请稍候...",
+                       self.current_mode)
 
         # 通知外部（main.py 会重新调用 API）
         if self._on_mode_switch:
@@ -295,10 +299,8 @@ class FloatingWindow:
         sb.pack(fill=tk.Y, side=tk.RIGHT)
         self.result_area.configure(yscrollcommand=sb.set)
 
-        # 插入初始内容
-        if self.result_text:
-            self.result_area.insert("1.0", self.result_text)
-        self.result_area.configure(state=tk.DISABLED)
+        # 渲染已有树（如果有）
+        self._render_tree()
 
     # ── 操作栏 ──────────────────────────────────────────
 
@@ -340,19 +342,136 @@ class FloatingWindow:
     # ── 交互 ────────────────────────────────────────────
 
     def _copy_result(self) -> None:
-        """复制结果到剪贴板"""
-        if self.result_text:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(self.result_text)
-            # 通知监视器：这是我主动写入的，别当成新内容触发弹窗
-            if self._on_copy:
-                self._on_copy(self.result_text)
+        """复制最后一个节点的结果到剪贴板"""
+        if self._tree_nodes:
+            last_result = self._tree_nodes[-1].get("result", "")
+            if last_result:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(last_result)
+                if self._on_copy:
+                    self._on_copy(last_result)
 
     def _retry(self) -> None:
-        """重试当前模式"""
-        self.update_result("⏳ 正在重新处理，请稍候...")
+        """重试：清空树 → 新根节点（保留模式）"""
+        self._tree_nodes = []
+        self._next_node_id = 0
+        self._add_node("query", self.original_text, "⏳ 正在重新处理，请稍候...",
+                       self.current_mode)
         if self._on_retry:
             self._on_retry()
+
+    # ── 对话树 ──────────────────────────────────────────
+
+    def _add_node(self, node_type: str, text: str, result: str,
+                  mode: str, parent_id: int | None = None) -> dict:
+        """添加节点到树中并重渲染"""
+        node_id = self._next_node_id
+        self._next_node_id += 1
+
+        depth = 0
+        if parent_id is not None:
+            parent = self._get_node(parent_id)
+            if parent:
+                depth = parent["depth"] + 1
+                # 更新旧"最后子节点"标记
+                for sibling in self._tree_nodes:
+                    if sibling.get("parent_id") == parent_id and sibling.get("is_last"):
+                        sibling["is_last"] = False
+
+        node = {
+            "id": node_id,
+            "type": node_type,
+            "text": text,
+            "result": result,
+            "mode": mode,
+            "parent_id": parent_id,
+            "depth": depth,
+            "is_last": True,
+        }
+        self._tree_nodes.append(node)
+        self._render_tree()
+        return node
+
+    def _render_tree(self) -> None:
+        """渲染整棵对话树到结果区域"""
+        if self.window is None or self.result_area is None:
+            return
+        try:
+            self.result_area.configure(state=tk.NORMAL)
+            self.result_area.delete("1.0", tk.END)
+
+            if not self._tree_nodes:
+                self.result_area.configure(state=tk.DISABLED)
+                return
+
+            # 配置标签样式
+            self.result_area.tag_configure("header", font=(FONT, 10, "bold"),
+                                           foreground=C["text"])
+            self.result_area.tag_configure("meta", font=(FONT, 9),
+                                           foreground=C["subtext"])
+            self.result_area.tag_configure("sep", font=(FONT, 9),
+                                           foreground=C["border"])
+            self.result_area.tag_configure("content", font=(FONT, 11),
+                                           foreground=C["text"])
+            self.result_area.tag_configure("loading", font=(FONT, 10, "italic"),
+                                           foreground=C["subtext"])
+
+            for node in self._tree_nodes:
+                # 计算树连接线前缀
+                prefix = self._compute_prefix(node)
+
+                mode_label = MODES.get(node["mode"], {}).get("label", node["mode"])
+                is_loading = "⏳" in node.get("result", "")
+
+                # 节点头
+                if node["type"] == "query":
+                    self.result_area.insert(tk.END, f"{prefix}━━ {mode_label} ━━\n", "header")
+                    self.result_area.insert(tk.END, f"{prefix}原文：{node['text'][:80]}\n", "meta")
+                else:
+                    self.result_area.insert(tk.END,
+                        f"{prefix}💬 追问 — {mode_label} ━━\n", "header")
+                    self.result_area.insert(tk.END,
+                        f"{prefix}选中：「{node['text'][:60]}」\n", "meta")
+
+                self.result_area.insert(tk.END, f"{prefix}━━\n", "sep")
+
+                # 节点内容
+                tag = "loading" if is_loading else "content"
+                self.result_area.insert(tk.END, f"{node['result']}\n\n", tag)
+
+                # 标记节点范围（用于追问时通过 tag 定位父节点）
+                line_start = self.result_area.index(tk.END + "-2l linestart")
+                self.result_area.tag_add(f"node_{node['id']}", line_start, tk.END + "-1c")
+
+            self.result_area.configure(state=tk.DISABLED)
+        except tk.TclError:
+            pass
+
+    def _compute_prefix(self, node: dict) -> str:
+        """计算树连接线前缀"""
+        if node["depth"] == 0:
+            return ""
+
+        # 收集从根到父节点的"是否有后续兄弟"信息
+        is_last_chain = []
+        current = node
+        while current["parent_id"] is not None:
+            is_last_chain.append(current.get("is_last", True))
+            current = self._get_node(current["parent_id"])
+            if current is None:
+                break
+        is_last_chain.reverse()  # 从根到当前节点
+
+        # 构建前缀
+        prefix = ""
+        for i, is_last in enumerate(is_last_chain):
+            if i == len(is_last_chain) - 1:
+                # 当前节点本身
+                prefix += "└─ " if is_last else "├─ "
+            else:
+                # 祖先层级
+                prefix += "   " if is_last else "│  "
+        return prefix
 
     # ── 追问（选中结果文字 → 气泡弹窗） ──────────────
 
@@ -409,7 +528,7 @@ class FloatingWindow:
             self._bubble = None
 
     def _do_follow_up(self) -> None:
-        """执行追问"""
+        """执行追问：从选中位置找父节点 → 添加子节点 → 发起请求"""
         try:
             selected = self.result_area.get(tk.SEL_FIRST, tk.SEL_LAST)
         except tk.TclError:
@@ -419,17 +538,46 @@ class FloatingWindow:
 
         self._hide_follow_up_bubble()
 
-        # 显示加载状态
-        self.update_result("⏳ 正在追问，请稍候...")
+        # 根据选中位置的 tag 找父节点
+        parent_id = self._find_parent_node_id()
+        parent_node = self._get_node(parent_id) if parent_id is not None else None
+        if parent_node is None and self._tree_nodes:
+            parent_node = self._tree_nodes[-1]
+
+        # 添加子节点
+        self._add_node("follow_up", selected.strip(), "⏳ 正在追问，请稍候...",
+                       self.current_mode, parent_node["id"] if parent_node else None)
 
         # 通知外部
         if self._on_follow_up:
+            prev_result = parent_node["result"] if parent_node else ""
             self._on_follow_up(
                 selected.strip(),
                 self.original_text,
-                self.result_text,
+                prev_result,
                 self.current_mode,
             )
+
+    def _find_parent_node_id(self) -> int | None:
+        """从选区 tag 推断所属节点"""
+        try:
+            tags = self.result_area.tag_names(tk.SEL_FIRST)
+            for tag in tags:
+                if tag.startswith("node_"):
+                    return int(tag.split("_")[1])
+        except tk.TclError:
+            pass
+        # fallback：最后一个节点
+        if self._tree_nodes:
+            return self._tree_nodes[-1]["id"]
+        return None
+
+    def _get_node(self, node_id: int) -> dict | None:
+        """按 id 查找节点"""
+        for n in self._tree_nodes:
+            if n["id"] == node_id:
+                return n
+        return None
 
     # ── 拖拽 ────────────────────────────────────────────
 

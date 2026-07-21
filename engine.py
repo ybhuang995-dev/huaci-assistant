@@ -76,5 +76,73 @@ class DeepSeekEngine:
             return f"❌ 未知错误：{e}"
 
 
+    def follow_up(self, original_text: str, previous_result: str,
+                  selected_text: str, mode: str) -> str:
+        """
+        追问模式：基于原文和上次回答，针对选中文本进一步提问。
+
+        Args:
+            original_text: 用户最初复制的原文
+            previous_result: AI 上次的回答
+            selected_text: 用户在回答中选中的文本
+            mode: 当前模式 key
+
+        Returns:
+            API 返回的追问结果
+        """
+        mode_config = MODES.get(mode, MODES["ask"])
+        mode_label = mode_config["label"]
+        system_prompt = mode_config["system_prompt"]
+
+        if not self.api_key:
+            return "❌ 未配置 API Key"
+
+        prompt = (
+            f"用户之前选中了以下原文，你以「{mode_label}」模式给出了回答。\n\n"
+            f"【原文】\n{original_text}\n\n"
+            f"【你的上次回答】\n{previous_result}\n\n"
+            f"【用户在回答中选中的内容】\n{selected_text}\n\n"
+            f"请针对用户选中的这部分，在上次回答的上下文基础上，"
+            f"提供更详细的解释或补充。保持「{mode_label}」角色定位。"
+        )
+
+        url = f"{self.base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            "stream": False,
+            "temperature": 0.3,
+        }
+
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=60)
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+
+        except requests.exceptions.Timeout:
+            return "⏱️ 请求超时，请重试。"
+        except requests.exceptions.ConnectionError:
+            return "🌐 网络连接失败，请检查网络或代理设置。"
+        except requests.exceptions.HTTPError:
+            status = resp.status_code
+            if status == 401:
+                return "🔑 API Key 无效。"
+            elif status == 429:
+                return "🔄 请求过于频繁，请稍后重试。"
+            elif status == 402:
+                return "💰 API 余额不足，请充值。"
+            return f"⚠️ API 错误（HTTP {status}）"
+        except Exception as e:
+            return f"❌ 未知错误：{e}"
+
+
 # 全局单例
 engine = DeepSeekEngine()

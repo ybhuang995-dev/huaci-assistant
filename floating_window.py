@@ -77,6 +77,10 @@ class FloatingWindow:
         self._on_mode_switch: callable | None = None
         self._on_retry: callable | None = None
         self._on_copy: callable | None = None
+        self._on_follow_up: callable | None = None
+
+        # 追问气泡
+        self._bubble: tk.Toplevel | None = None
 
     # ── 辅助方法 ────────────────────────────────────────
 
@@ -160,7 +164,12 @@ class FloatingWindow:
         """设置复制回调：callback(text) — 传入被复制的结果文本"""
         self._on_copy = callback
 
+    def set_on_follow_up(self, callback: callable) -> None:
+        """设置追问回调：callback(selected, original, previous, mode)"""
+        self._on_follow_up = callback
+
     def hide(self, event=None) -> None:
+        self._hide_follow_up_bubble()
         if self.window:
             try:
                 self.window.destroy()
@@ -271,9 +280,13 @@ class FloatingWindow:
             insertbackground=C["text"], font=(FONT, 11),
             wrap=tk.WORD, bd=0, padx=14, pady=10,
             selectbackground="#bfdbfe", selectforeground=C["text"],
+            exportselection=False,  # 失焦不丢选中（配合追问气泡）
             relief=tk.FLAT,
         )
         self.result_area.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+
+        # 选中文本时弹出追问气泡
+        self.result_area.bind("<<Selection>>", self._on_result_select)
 
         # 滚动条
         sb = tk.Scrollbar(container, command=self.result_area.yview,
@@ -340,6 +353,83 @@ class FloatingWindow:
         self.update_result("⏳ 正在重新处理，请稍候...")
         if self._on_retry:
             self._on_retry()
+
+    # ── 追问（选中结果文字 → 气泡弹窗） ──────────────
+
+    def _on_result_select(self, event=None) -> None:
+        """检测结果区文本选中 → 显示追问气泡"""
+        try:
+            sel = self.result_area.get(tk.SEL_FIRST, tk.SEL_LAST)
+            if sel and sel.strip():
+                self._show_follow_up_bubble()
+                return
+        except tk.TclError:
+            pass
+        self._hide_follow_up_bubble()
+
+    def _show_follow_up_bubble(self) -> None:
+        """显示追问气泡（选中文下方弹出的小按钮）"""
+        if self._bubble is not None:
+            return  # 已显示
+
+        # 计算气泡位置（选中位置下方）
+        try:
+            bbox = self.result_area.bbox("sel.first")
+            if bbox:
+                x = self.result_area.winfo_rootx() + bbox[0]
+                y = self.result_area.winfo_rooty() + bbox[1] + bbox[3] + 6
+            else:
+                x = self.window.winfo_pointerx()
+                y = self.window.winfo_pointery() + 16
+        except tk.TclError:
+            x = self.window.winfo_pointerx()
+            y = self.window.winfo_pointery() + 16
+
+        bubble = tk.Toplevel(self.root)
+        bubble.overrideredirect(True)
+        bubble.attributes("-topmost", True)
+        bubble.configure(bg=C["accent"])
+
+        btn = tk.Label(bubble, text="💬 追问", bg=C["accent"], fg="#ffffff",
+                       font=(FONT, 10), padx=10, pady=3, cursor="hand2")
+        btn.pack()
+        btn.bind("<Button-1>", lambda e: self._do_follow_up())
+
+        bubble.geometry(f"+{x}+{y}")
+        bubble.bind("<FocusOut>", lambda e: self._hide_follow_up_bubble())
+        self._bubble = bubble
+
+    def _hide_follow_up_bubble(self) -> None:
+        """关闭追问气泡"""
+        if self._bubble is not None:
+            try:
+                self._bubble.destroy()
+            except tk.TclError:
+                pass
+            self._bubble = None
+
+    def _do_follow_up(self) -> None:
+        """执行追问"""
+        try:
+            selected = self.result_area.get(tk.SEL_FIRST, tk.SEL_LAST)
+        except tk.TclError:
+            return
+        if not selected or not selected.strip():
+            return
+
+        self._hide_follow_up_bubble()
+
+        # 显示加载状态
+        self.update_result("⏳ 正在追问，请稍候...")
+
+        # 通知外部
+        if self._on_follow_up:
+            self._on_follow_up(
+                selected.strip(),
+                self.original_text,
+                self.result_text,
+                self.current_mode,
+            )
 
     # ── 拖拽 ────────────────────────────────────────────
 

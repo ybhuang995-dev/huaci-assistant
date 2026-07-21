@@ -91,17 +91,22 @@ def _on_clipboard_change(text: str) -> None:
 # ═══════════════════════════════════════════════════════════
 
 def _worker(root: tk.Tk, window: FloatingWindow) -> None:
-    """工作线程：处理 API 查询"""
+    """工作线程：处理 API 查询 / 追问"""
     while not _exit_flag.is_set():
         try:
             task = _work_queue.get(timeout=0.5)
         except queue.Empty:
             continue
 
-        text, mode, query_id = task
-        _log(f"WORKER: query [{mode}] len={len(text)}")
+        text, mode, query_id, follow_up_data = task
+        _log(f"WORKER: query [{mode}] len={len(text)}"
+             + (" [追问]" if follow_up_data else ""))
         try:
-            result = engine.query(text, mode)
+            if follow_up_data:
+                original, previous = follow_up_data
+                result = engine.follow_up(original, previous, text, mode)
+            else:
+                result = engine.query(text, mode)
         except Exception as e:
             result = f"❌ 查询出错：{e}"
 
@@ -126,7 +131,7 @@ def _make_mode_switch_handler(window: FloatingWindow):
             _query_counter += 1
             qid = _query_counter
         _log(f"UI: mode switch to [{mode}], qid={qid}")
-        _work_queue.put((window.original_text, mode, qid))
+        _work_queue.put((window.original_text, mode, qid, None))
     return handler
 
 
@@ -137,7 +142,18 @@ def _make_retry_handler(window: FloatingWindow):
             _query_counter += 1
             qid = _query_counter
         _log(f"UI: retry [{window.current_mode}], qid={qid}")
-        _work_queue.put((window.original_text, window.current_mode, qid))
+        _work_queue.put((window.original_text, window.current_mode, qid, None))
+    return handler
+
+
+def _make_follow_up_handler(window: FloatingWindow):
+    def handler(selected: str, original: str, previous: str, mode: str) -> None:
+        global _query_counter
+        with _query_lock:
+            _query_counter += 1
+            qid = _query_counter
+        _log(f"UI: follow_up [{mode}] selected=[{selected[:40]}]")
+        _work_queue.put((selected, mode, qid, (original, previous)))
     return handler
 
 
@@ -159,7 +175,7 @@ def _start_query_for_text(root: tk.Tk, window: FloatingWindow,
     window.show(text, "⏳ 正在处理，请稍候...", mode=DEFAULT_MODE)
 
     # 放入工作队列
-    _work_queue.put((text, DEFAULT_MODE, qid))
+    _work_queue.put((text, DEFAULT_MODE, qid, None))
 
 
 # ═══════════════════════════════════════════════════════════
@@ -215,6 +231,7 @@ def main() -> None:
     window.set_on_mode_switch(_make_mode_switch_handler(window))
     window.set_on_retry(_make_retry_handler(window))
     window.set_on_copy(lambda text: monitor.mark_as_seen(text))
+    window.set_on_follow_up(_make_follow_up_handler(window))
 
     # 系统托盘
     tray_thread = threading.Thread(target=_run_tray, name="Tray", daemon=True)

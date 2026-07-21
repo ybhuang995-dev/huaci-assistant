@@ -526,8 +526,9 @@ class FloatingWindow:
         """切换侧边栏显示/隐藏"""
         self._sidebar_visible = not self._sidebar_visible
         if self._sidebar_visible:
-            # 拿到容器（outer 的第一个子控件），侧边栏放在它左边
-            siblings = self._sidebar_frame.master.winfo_children()
+            # 找到兄弟 container（排除 sidebar 自身），放在它左边
+            siblings = [c for c in self._sidebar_frame.master.winfo_children()
+                        if c is not self._sidebar_frame]
             if siblings:
                 self._sidebar_frame.pack(fill=tk.Y, side=tk.LEFT,
                                          before=siblings[0])
@@ -584,12 +585,12 @@ class FloatingWindow:
                     label = f"{indent}{marker}💬 追问: {text_preview}\n"
 
                 tag = "node_label_root" if depth == 0 else "node_label"
-                self._sidebar_text.insert(tk.END, label, tag)
 
-                # 绑定点击跳转（用闭包捕获 node_id）
-                line_start = self._sidebar_text.index(tk.END + "-2l")
-                line_end = self._sidebar_text.index(tk.END + "-1c")
-                self._sidebar_text.tag_add(f"side_{node['id']}", line_start, line_end)
+                # 记录插入前位置，用于标记整行
+                line_start = self._sidebar_text.index(tk.END)
+                self._sidebar_text.insert(tk.END, label, tag)
+                self._sidebar_text.tag_add(f"side_{node['id']}",
+                                           line_start, f"{line_start} lineend")
                 self._sidebar_text.tag_bind(
                     f"side_{node['id']}", "<Button-1>",
                     lambda e, nid=node["id"]: self._jump_to_node(nid))

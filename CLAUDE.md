@@ -2,196 +2,169 @@
 
 > **角色：Builder。帮主人从零构建 Windows 全局划词翻译 + 大模型提问工具。**
 
+## 运行命令
+
+```
+pip install -r requirements.txt   # 安装依赖（首次）
+python main.py                    # 启动（托盘常驻，Ctrl+C 复制触发）
+run.bat                           # Windows 一键启动
+python test_ui.py                 # 诊断用：独立测试悬浮窗组件渲染
+```
+
 ## 项目定位
 
-一个 Windows 桌面工具：在任意应用中选中文字，Ctrl+C 复制，自动弹出悬浮窗显示翻译或大模型回答。不做浏览器插件、不做 Electron 重框架，追求轻量、快速、易维护。
+Windows 桌面工具：在任意应用中选中文字，Ctrl+C 复制，自动弹出悬浮窗显示翻译或大模型回答。不做浏览器插件、不做 Electron 重框架。
 
-## 核心交互（借鉴 OpenAI Translator 后修正）
+## 核心交互
 
 ```
 用户选中文字 → Ctrl+C（正常复制操作）
     │
     ▼
-后台监听剪贴板变更
-    │
-    ├→ 智能过滤（去重 / 路径 / 太短 / 无意义）
+后台监听剪贴板变更 → 智能过滤（去重/路径/URL/太短/纯数字）
     │
     ├→ 通过 → 弹出悬浮窗
-    │        ┌─────────────────────────────┐
-    │        │ [翻译] [提问] [润色] [总结]  │  ← 模式切换标签
-    │        ├─────────────────────────────┤
-    │        │  原文: Hello world          │
-    │        │                             │
-    │        │  ── 结果（流式输出）──       │
-    │        │  你好，世界                  │
-    │        ├─────────────────────────────┤
-    │        │ [📋 复制] [🔄 重试] [✕]   │
-    │        └─────────────────────────────┘
+    │        ┌──────────────────────────────────────┐
+    │        │ [翻译] [提问] [润色] [总结]      [✕] │
+    │        ├──────────────────────────────────────┤
+    │        │ ← 侧边栏  │  对话树结果区（可滚动）  │
+    │        │ (📂 切换) │                          │
+    │        │           │ 复制的文字 ← 节点名       │
+    │        │  划词文本  │ ────────────             │
+    │        │   ├ 追问1  │ AI 回答内容              │
+    │        │   └ 追问2  │      └─ 追问的追问       │
+    │        ├──────────────────────────────────────┤
+    │        │ [📋 复制] [📂 分支树] [🔄 重试]      │
+    │        └──────────────────────────────────────┘
     │
-    └→ 不通过 → 不弹窗，静默忽略
+    └→ 不通过 → 静默忽略，不弹窗
 ```
 
-**为什么剪贴板而非选中文本**：OpenAI Translator 的核心设计——"复制即翻译"。用户本就要 Ctrl+C，不增加任何额外操作。且绕过了 Windows 选中文本捕获的技术难点（不同应用获取选中文本的方式不一致）。
+**为什么剪贴板而非选中文本**：OpenAI Translator 的核心设计——"复制即翻译"。用户本就要 Ctrl+C，不增加额外操作。
 
 ## 技术栈
 
 - **语言**：Python 3.10+
-- **LLM API**：DeepSeek API（OpenAI 兼容）/ 后续可扩展 OpenAI、Ollama
-- **剪贴板监听**：`ctypes` 直接调用 Windows API（`OpenClipboard`/`GetClipboardData`/`GlobalLock`），轮询间隔 400ms
-- **UI 悬浮窗**：`tkinter`（无边框 Toplevel，置顶，可拖拽），浅色主题
-- **HTTP 请求**：`requests`（当前非流式，后续换 `httpx` 做 SSE streaming）
-- **系统托盘**：`pystray` + `Pillow`（生成托盘图标）
-- **配置管理**：`python-dotenv`（`.env` 文件）
-- **打包分发**：`PyInstaller` → 单 exe，系统托盘常驻，开机自启
+- **UI**：`tkinter`（无边框 `overrideredirect` Toplevel，置顶，可拖拽）
+- **剪贴板**：`ctypes` 直接调用 Windows API（`OpenClipboard`/`GetClipboardData`/`GlobalLock`），轮询 400ms
+- **LLM**：DeepSeek API（OpenAI 兼容），`requests` 非流式调用
+- **托盘**：`pystray` + `Pillow`
+- **配置**：`python-dotenv` 加载 `.env`
 
-> **已废弃的尝试**：`keyboard` 库 + `keybd_event`/`SendInput` 模拟 Ctrl+C。原因：键盘钩子线程重入导致死锁。剪贴板监听方案更简单可靠。
+> **已废弃**：`keyboard` 库 + `SendInput` 模拟 Ctrl+C（键盘钩子线程重入导致死锁）。
 
-## 智能过滤（防误触）
-
-OpenAI Translator 的经验：如果没有过滤，复制文件路径、单个字母、数字等也会弹窗，极其烦人。
-
-```
-剪贴板变更
-  ├→ 与上次内容完全相同 → 跳过（去重）
-  ├→ 纯文件路径（匹配盘符 / 路径分隔符）→ 跳过
-  ├→ 纯数字 / 纯符号 → 跳过
-  ├→ 字符数 < 2 → 跳过
-  ├→ 纯 URL → 跳过
-  └→ 以上都不匹配 → 触发弹出
-```
-
-## 模式设计（Prompt 驱动）
-
-借鉴 OpenAI Translator——翻译、润色、总结、提问共用同一调用逻辑，差异只在 system prompt：
-
-| 模式 | 默认快捷键 | System Prompt |
-|------|-----------|---------------|
-| 翻译 | 弹出窗默认 | "你是专业翻译，保留技术术语……" |
-| 提问 | 弹出窗内切换 | "你是通用 AI 助手，回答用户问题……" |
-| 润色 | 弹出窗内切换 | "优化以下文字的表达，不改原意……" |
-| 总结 | 弹出窗内切换 | "用简洁的要点总结以下内容……" |
-
-## 引擎层（当前实现）
-
-只有一个 `DeepSeekEngine`，调用 OpenAI 兼容 API。后续扩展再加抽象。
-
-```python
-class DeepSeekEngine:
-    """DeepSeek API（OpenAI 兼容）"""
-    def query(self, text: str, mode: str) -> str:
-        """根据 mode 查 MODES 配置的 system_prompt，调用 /chat/completions"""
-
-# 全局单例
-engine = DeepSeekEngine()
-```
-
-## 架构（当前实现）
+## 架构（三线程 + 双队列）
 
 ```
 ┌─────────────────┐     _clip_queue      ┌──────────┐
 │ ClipboardMonitor │ ─────────────────→  │ 主线程    │
 │ (daemon thread)  │                     │ (tkinter) │
 │ 轮询 400ms       │                     │ _tick()   │
-│ 智能过滤         │                     │ 100ms     │
+│ 8条正则过滤      │                     │ 100ms     │
 └─────────────────┘                     └──────────┘
                                                │
-                                         显示/刷新悬浮窗
-                                         放入 _work_queue
+                                         show() 显示悬浮窗
+                                         put _work_queue
                                                │
                                                ▼
                                         ┌──────────┐
                                         │ Worker   │
                                         │ (daemon) │
-                                        │ 调 API   │
+                                        │ query()  │
+                                        │ follow_up│
                                         └──────────┘
                                                │
                                          root.after()
-                                         更新结果区域
+                                         window.update_result()
 ```
 
-**关键设计决策**：
-- **双队列**：`_clip_queue`（剪贴板事件 → 主线程处理）和 `_work_queue`（API 查询 → 工作线程处理）分离，避免早期单队列导致的互相干扰 bug
-- **查询计数器**：`_query_counter` 全局递增，每次新查询 +1。Worker 返回结果时检查 `query_id`，如果已有更新查询则丢弃旧结果，防止过期结果覆盖新内容
-- **两层去重**：① 监听器层（`_read_clipboard` 在 I/O 边界标准化文本 + `_last_text`/`_last_triggered` 比较）② `mark_as_seen()`（主动复制结果时标记，避免自己写入剪贴板触发弹窗）
+**关键决策**：
+- **双队列**：`_clip_queue`（剪贴板事件 → 主线程）+ `_work_queue`（API 调用 → Worker），分离避免互相干扰
+- **查询计数器**：`_query_counter` 全局递增。Worker 完成后检查 `query_id`，丢弃过期结果（切换模式/新查询导致的旧请求）
+- **两层去重**：① `_read_clipboard()` 标准化文本 + `_last_text`/`_last_triggered` 比较 ② `mark_as_seen()` 标记自己写入剪贴板的内容
+- **工作队列任务格式**：`(text, mode, query_id, follow_up_data_or_None)`
 
-## 对标项目
+## 对话树与追问
 
-| 项目 | Stars | 参考价值 |
-|------|-------|---------|
-| [Honyo](https://github.com/rot1024/honyo) | ~1k | 双 Ctrl+C 触发、悬浮窗+流式、多模型切换。形态最接近我们的目标 |
-| [AI-Tools-AHK](https://github.com/ecornell/ai-tools-ahk) | ~500 | 最轻量的热键→LLM 方案。不同热键对应不同 prompt |
-| [OpenAI Translator](https://github.com/yetone/openai-translator) | 18k+ | **最大参考源**。剪贴板监听+悬浮窗、6 种模式 prompt 驱动、智能过滤、Tauri+Rust 桌面端 |
-| [What Is](https://github.com/wisamidris77/what_is) | ~200 | 系统托盘 + 翻译/解释/代码三模式，多 LLM 后端 |
-| [PopTrans](https://github.com/ifocus9/PopTrans) | ~300 | Windows 原生、离线 OCR、毛玻璃悬浮窗 |
-| [Pot](https://github.com/ohyoxo/pot-desktop) | 12k+ | 最全翻译工具，OCR + 20+ 接口，功能方向的终极参考 |
+当前最核心的交互设计——用户可以在 AI 回答中划选文字，弹出「💬 追问」气泡，基于上下文深入提问。
 
-## OpenAI Translator 关键借鉴
+**数据模型**（`FloatingWindow._tree_nodes`）：
+```python
+node = {
+    "id": int,           # 自增唯一
+    "type": str,         # "query" | "follow_up"（数据保留，渲染不区分）
+    "text": str,         # 触发本节点的文本（复制的原文 or 选中的追问文字）
+    "result": str,       # AI 返回的回答
+    "mode": str,         # "translate" | "ask" | "polish" | "summarize"
+    "parent_id": int|None,  # 父节点，None = 根
+    "depth": int,        # 树深度
+    "is_last": bool,     # 是否父节点的最后一个子节点（用于 ├ └ 前缀）
+}
+```
 
-深入分析后，以下设计直接采纳：
+**树渲染**（`_render_tree`）：用 `├─` `└─` `│` 连接符内联渲染到 `result_area` Text 控件。每个节点前设 `mark("n{id}")` 用于侧边栏跳转定位。节点名 = 划词文本（不区分 query/follow_up 类型）。
 
-| 借鉴 | 说明 |
-|------|------|
-| 剪贴板监听触发 | 非热键捕获选中文本。Copy = Translate，零额外学习成本 |
-| 富过滤 | 去重、路径检测、长度判断——避免误触发是体验核心 |
-| Prompt 驱动模式 | 翻译/提问/润色/总结共用一套代码，差异只在 system prompt |
-| 单词检测→词典模式 | 输入为单个单词时自动切词典（发音+词性+例句） |
-| 悬浮窗内模式切换 | 一个窗口，标签切换模式，而非多个快捷键 |
-| 留引擎扩展口 | 先实现 DeepSeek，接口设计兼容后续 Ollama/OpenAI |
+**追问回调链**：
+```
+用户划选文字 → "💬 追问"气泡 → _do_follow_up()
+  → _add_node("follow_up", selected_text, ...)
+  → _on_follow_up(selected, original_text, previous_result, mode)
+  → main.py 将 (selected, mode, qid, (original, previous)) 放入 _work_queue
+  → Worker 调用 engine.follow_up()
+```
 
-## 开发阶段
+**`engine.follow_up()`**：传入原文 + 上次回答 + 选中文字，构造带上下文的 prompt 再调用 API。
 
-### Phase 1：最小可用（MVP）✅ 已完成
-- [x] 剪贴板监听（ctypes 轮询，400ms 间隔）
-- [x] 智能过滤（8 条正则规则：去重/路径/URL/文件名/纯数字/太短）
-- [x] DeepSeek API 调用（非流式，4 种模式）
-- [x] tkinter 悬浮窗（浅色主题，500×400，鼠标旁弹出）
-- [x] 系统托盘图标 + 右键菜单（退出）
-- [x] 悬浮窗内模式切换（翻译/提问/润色/总结）
-- [x] 双队列架构 + 查询计数器（防过期结果覆盖）
-- [x] Enter 复制结果、Esc 关闭
-- [x] 拖拽移动窗口
+**侧边栏**（`_toggle_sidebar` / `_render_sidebar` / `_jump_to_node`）：
+- 「📂 分支树」按钮切换 200px 左侧面板
+- 节点名 = 划词文本（与主结果区一致），缩进 + `├ └` 显示层级
+- 点击节点 → `result_area.see("n{id}")` 跳转
 
-### Phase 2：完善体验
-- [ ] SSE 流式输出（结果逐字出现）
-- [ ] 悬浮窗优化：毛玻璃效果、窗口大小可调
-- [ ] 单词检测 → 词典模式（发音+词性+例句）
-- [ ] 全局热键补充（强制唤起悬浮窗，不依赖剪贴板）
-- [ ] 复制按钮视觉反馈（已复制提示）
-- [ ] 加载动画（⏳ 替换为骨架屏/spinner）
+## tkinter 注意事项
 
-### Phase 3：打磨发布
-- [ ] 自定义快捷键、自定义 Prompt
-- [ ] 多模型切换（DeepSeek / OpenAI 兼容 / Ollama 本地）
-- [ ] 历史记录（SQLite）
-- [ ] PyInstaller 打包单 exe
-- [ ] 开机自启
-- [ ] 自动更新检查（可选）
+- **`tk.Button` 不可见**：部分 Windows 11 系统上 `tk.Button(bd=0)` 不渲染。操作栏统一用 `tk.Label` + `<Button-1>` 绑定代替，与标签栏一致
+- **BOTTOM pack 几何 bug**：当 `_inner` 内同时有 `expand=True` 的 TOP 控件 + BOTTOM 控件时，BOTTOM 可能被挤没（Windows 11 部分 tkinter 版本）。两个措施缺一不可：
+  1. 容器 Frame 作为唯一的 BOTTOM 子控件 + `pack_propagate(False)` 锁死高度
+  2. **调用顺序**：BOTTOM 控件必须先于 `expand=True` 的 TOP 控件 pack（在 `show()` 里 `_build_action_bar()` 在 `_build_result_area()` 之前调用）
+- **`overrideredirect(True)`** 窗口无标题栏，需自行实现拖拽（`<B1-Motion>`）和关闭（`<Escape>` 绑定）
+
+## 模式设计（Prompt 驱动）
+
+| 模式 | key | System Prompt 要点 |
+|------|-----|-------------------|
+| 翻译 | `translate` | 中→英 / 英→中，保留格式 |
+| 提问 | `ask` | 通用 AI 助手，中文回答 |
+| 润色 | `polish` | 优化表达，改语法，不改原意 |
+| 总结 | `summarize` | 3-5 要点，无序列表 |
+
+所有模式共用 `DeepSeekEngine.query()` / `follow_up()`，差异只在 `config.py` 的 `MODES[key]["system_prompt"]`。
+
+## 开发进度
+
+### ✅ Phase 1（MVP + 交互增强）
+- 剪贴板监听 + 8 条正则智能过滤
+- DeepSeek API 4 种模式 + `follow_up()` 上下文追问
+- 悬浮窗：标签栏 + 原文预览 + 结果滚动区 + 操作栏
+- 对话树内联渲染 + 侧边栏树导航
+- 追问气泡（选文字 → 💬 追问）
+- 系统托盘 + 右键退出
+- 双队列 + 查询计数器
+- Enter 复制、Esc 关闭、拖拽移动
+
+### 🔜 Phase 2
+- SSE 流式输出（`requests` → `httpx`）
+- 单词检测 → 词典模式（发音+词性+例句）
+- 全局热键补充
+- 侧边栏键盘导航（↑↓←→ 切换节点）
+- 子树折叠/展开
+
+### 📋 Phase 3
+- 多模型切换 / 自定义 Prompt / SQLite 历史
+- PyInstaller 打包单 exe + 开机自启
 
 ## 行为边界
 
-- ✅ 写代码、运行、调试
-- ✅ 安装依赖（pip install）
-- ✅ 读参考项目源码学习思路
+- ✅ 写代码、运行、调试、改完就跑通验证
+- ✅ pip install 依赖
 - ❌ 不做浏览器插件、不做移动端
-
-## 项目结构
-
-```
-划词助手/
-├── main.py              ← 主入口：三线程 + 双队列 + 托盘
-├── clipboard_monitor.py ← ctypes 剪贴板轮询 + 8 条正则过滤
-├── floating_window.py   ← 悬浮窗：标签栏 + 原文 + 结果 + 操作栏
-├── engine.py            ← DeepSeek API（OpenAI 兼容）
-├── config.py            ← 配置管理：模式定义、过滤规则、API Key
-├── requirements.txt     ← 依赖（requests pystray Pillow python-dotenv）
-├── run.bat              ← Windows 一键启动
-├── .env.example         ← 配置模板
-├── .env                 ← 实际配置（已 gitignore）
-├── .gitignore
-└── CLAUDE.md            ← 本文件
-```
-
-## 输出风格
-
-- 每个 phase 开始前先讲设计思路，再写代码
-- 改完就跑通验证
+- ❌ 不提交 `.env`、API Key 到 Git

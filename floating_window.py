@@ -75,6 +75,7 @@ class FloatingWindow:
         # 对话树
         self._tree_nodes: list[dict] = []  # [{id, type, text, result, mode, parent_id, depth, is_last}]
         self._next_node_id = 0
+        self._active_node_id: int | None = None  # 当前结果区显示的节点
 
         # 回调（由 main.py 设置）
         self._on_mode_switch: callable | None = None
@@ -84,6 +85,10 @@ class FloatingWindow:
 
         # 追问气泡
         self._bubble: tk.Toplevel | None = None
+
+        # 分支树侧边栏
+        self._sidebar_visible = False
+        self._sidebar_canvas: tk.Canvas | None = None
 
     # ── 辅助方法 ────────────────────────────────────────
 
@@ -138,8 +143,8 @@ class FloatingWindow:
 
         self._build_tab_bar()
         self._build_original_preview()
-        self._build_result_area()
-        self._build_action_bar()
+        self._build_action_bar()      # BOTTOM 先 pack，抢在 expand 之前占位
+        self._build_result_area()     # TOP expand 后 pack，吃剩余空间
 
         # 快捷键
         self.window.bind("<Escape>", lambda e: self.hide())
@@ -181,6 +186,10 @@ class FloatingWindow:
             self._tab_widgets = None
             self.preview_label = None
             self.result_area = None
+            self._sidebar_canvas = None
+            self._sidebar_btn = None
+            self._sidebar_visible = False
+            self._active_node_id = None
 
     # ── 标签栏 ──────────────────────────────────────────
 
@@ -275,9 +284,32 @@ class FloatingWindow:
     # ── 结果区域 ────────────────────────────────────────
 
     def _build_result_area(self) -> None:
-        """构建滚动结果区域"""
-        container = tk.Frame(self._inner, bg=C["bg"])
-        container.pack(fill=tk.BOTH, expand=True, padx=2, pady=(2, 0))
+        """构建滚动结果区域 + 可折叠侧边栏"""
+        # 外层水平容器：侧边栏 | 结果区
+        outer = tk.Frame(self._inner, bg=C["bg"])
+        outer.pack(fill=tk.BOTH, expand=True, padx=2, pady=(2, 0))
+
+        # ── 侧边栏（默认隐藏） ──
+        self._sidebar_frame = tk.Frame(outer, bg=C["surface"], width=200)
+        self._sidebar_frame.pack_propagate(False)
+        # 不 pack，由 _toggle_sidebar 控制
+
+        self._sidebar_canvas = tk.Canvas(
+            self._sidebar_frame, bg=C["surface"],
+            bd=0, highlightthickness=0,
+        )
+        self._sidebar_canvas.bind("<MouseWheel>",
+            lambda e: self._sidebar_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+        self._sidebar_canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+
+        sb_side = tk.Scrollbar(self._sidebar_frame, command=self._sidebar_canvas.yview,
+                               bg=C["scroll_bg"], troughcolor=C["surface"])
+        sb_side.pack(fill=tk.Y, side=tk.RIGHT)
+        self._sidebar_canvas.configure(yscrollcommand=sb_side.set)
+
+        # ── 结果区 ──
+        container = tk.Frame(outer, bg=C["bg"])
+        container.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
 
         self.result_area = tk.Text(
             container, bg=C["bg"], fg=C["text"],
@@ -305,34 +337,36 @@ class FloatingWindow:
     # ── 操作栏 ──────────────────────────────────────────
 
     def _build_action_bar(self) -> None:
-        """构建底部操作栏"""
-        bar = tk.Frame(self._inner, bg=C["surface"], height=34)
-        bar.pack(fill=tk.X, side=tk.BOTTOM)
-        bar.pack_propagate(False)
+        """构建底部操作栏（pack_propagate(False) 防止被 expand=True 区域挤没）"""
+        bottom = tk.Frame(self._inner, bg=C["bg"], height=34)
+        bottom.pack(fill=tk.X, side=tk.BOTTOM)
+        bottom.pack_propagate(False)
 
-        # 操作栏上方分隔线（pack 在 bar 之后 → 在 bar 上方）
-        self._add_separator(self._inner, tk.BOTTOM)
+        sep = tk.Frame(bottom, bg=C["border"], height=1)
+        sep.pack(fill=tk.X, side=tk.TOP)
+
+        bar = tk.Frame(bottom, bg=C["surface"])
+        bar.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
 
         btn_frame = tk.Frame(bar, bg=C["surface"])
-        btn_frame.pack(side=tk.LEFT, padx=8)
+        btn_frame.pack(side=tk.LEFT, padx=4)
 
-        # 复制按钮
-        copy_btn = tk.Button(
-            btn_frame, text="📋 复制", bg=C["surface"], fg=C["text"],
-            font=(FONT, 9), bd=0, cursor="hand2", padx=8,
-            activebackground=C["border"], activeforeground=C["accent"],
-            command=self._copy_result,
-        )
-        copy_btn.pack(side=tk.LEFT, padx=(0, 4))
+        def _make_btn(text, command):
+            """用 Label 模拟按钮"""
+            lbl = tk.Label(btn_frame, text=text, bg=C["surface"], fg=C["text"],
+                           font=(FONT, 9), padx=8, pady=4, cursor="hand2")
+            lbl.pack(side=tk.LEFT, padx=2)
+            lbl.bind("<Button-1>", lambda e: command())
+            return lbl
 
-        # 重试按钮
-        retry_btn = tk.Button(
-            btn_frame, text="🔄 重试", bg=C["surface"], fg=C["text"],
-            font=(FONT, 9), bd=0, cursor="hand2", padx=8,
-            activebackground=C["border"], activeforeground=C["accent"],
-            command=self._retry,
-        )
-        retry_btn.pack(side=tk.LEFT, padx=(0, 4))
+        # 复制
+        _make_btn("📋 复制", self._copy_result)
+
+        # 分支树侧边栏
+        self._sidebar_btn = _make_btn("📂 分支树", self._toggle_sidebar)
+
+        # 重试
+        _make_btn("🔄 重试", self._retry)
 
         # 快捷键提示
         hint = tk.Label(bar, text="Esc 关闭  |  Enter 复制",
@@ -342,14 +376,14 @@ class FloatingWindow:
     # ── 交互 ────────────────────────────────────────────
 
     def _copy_result(self) -> None:
-        """复制最后一个节点的结果到剪贴板"""
-        if self._tree_nodes:
-            last_result = self._tree_nodes[-1].get("result", "")
-            if last_result:
+        """复制活跃节点的结果到剪贴板"""
+        if self._active_node_id is not None:
+            node = self._get_node(self._active_node_id)
+            if node and node.get("result", ""):
                 self.root.clipboard_clear()
-                self.root.clipboard_append(last_result)
+                self.root.clipboard_append(node["result"])
                 if self._on_copy:
-                    self._on_copy(last_result)
+                    self._on_copy(node["result"])
 
     def _retry(self) -> None:
         """重试：清空树 → 新根节点（保留模式）"""
@@ -389,89 +423,173 @@ class FloatingWindow:
             "is_last": True,
         }
         self._tree_nodes.append(node)
+        self._active_node_id = node_id  # 新节点自动成为活跃节点
         self._render_tree()
         return node
 
     def _render_tree(self) -> None:
-        """渲染整棵对话树到结果区域"""
+        """渲染当前活跃节点到结果区（单节点显示，非内联树）"""
         if self.window is None or self.result_area is None:
             return
         try:
             self.result_area.configure(state=tk.NORMAL)
             self.result_area.delete("1.0", tk.END)
 
-            if not self._tree_nodes:
+            # 配置标签样式
+            self.result_area.tag_configure("header", font=(FONT, 10, "bold"),
+                                           foreground=C["text"], spacing3=6)
+            self.result_area.tag_configure("sep", font=(FONT, 7),
+                                           foreground=C["border"])
+            self.result_area.tag_configure("content", font=(FONT, 11),
+                                           foreground=C["text"],
+                                           lmargin1=0, lmargin2=0)
+            self.result_area.tag_configure("loading", font=(FONT, 10, "italic"),
+                                           foreground=C["subtext"])
+            self.result_area.tag_configure("depth_hint", font=(FONT, 9),
+                                           foreground=C["subtext"])
+
+            if not self._tree_nodes or self._active_node_id is None:
                 self.result_area.configure(state=tk.DISABLED)
                 return
 
-            # 配置标签样式
-            self.result_area.tag_configure("header", font=(FONT, 10, "bold"),
-                                           foreground=C["text"])
-            self.result_area.tag_configure("meta", font=(FONT, 9),
-                                           foreground=C["subtext"])
-            self.result_area.tag_configure("sep", font=(FONT, 9),
-                                           foreground=C["border"])
-            self.result_area.tag_configure("content", font=(FONT, 11),
-                                           foreground=C["text"])
-            self.result_area.tag_configure("loading", font=(FONT, 10, "italic"),
-                                           foreground=C["subtext"])
+            node = self._get_node(self._active_node_id)
+            if node is None:
+                self.result_area.configure(state=tk.DISABLED)
+                return
 
-            for node in self._tree_nodes:
-                # 计算树连接线前缀
-                prefix = self._compute_prefix(node)
+            is_loading = "⏳" in node.get("result", "")
 
-                mode_label = MODES.get(node["mode"], {}).get("label", node["mode"])
-                is_loading = "⏳" in node.get("result", "")
+            # 追问层级提示
+            if node["depth"] > 0:
+                parent = self._get_node(node["parent_id"]) if node.get("parent_id") is not None else None
+                if parent:
+                    parent_label = parent["text"].replace("\n", " ").strip()
+                    if len(parent_label) > 50:
+                        parent_label = parent_label[:50] + "…"
+                    self.result_area.insert(tk.END, f"↳ 追问自：{parent_label}\n", "depth_hint")
 
-                # 节点头
-                if node["type"] == "query":
-                    self.result_area.insert(tk.END, f"{prefix}━━ {mode_label} ━━\n", "header")
-                    self.result_area.insert(tk.END, f"{prefix}原文：{node['text'][:80]}\n", "meta")
-                else:
-                    self.result_area.insert(tk.END,
-                        f"{prefix}💬 追问 — {mode_label} ━━\n", "header")
-                    self.result_area.insert(tk.END,
-                        f"{prefix}选中：「{node['text'][:60]}」\n", "meta")
+            # 节点头 = 划词文本
+            label = node["text"].replace("\n", " ").strip()
+            if len(label) > 100:
+                label = label[:100] + "…"
+            self.result_area.insert(tk.END, f"{label}\n",
+                                   "loading" if is_loading else "header")
 
-                self.result_area.insert(tk.END, f"{prefix}━━\n", "sep")
+            # 分隔线
+            self.result_area.insert(tk.END, f"{'─' * 40}\n", "sep")
 
-                # 节点内容
-                tag = "loading" if is_loading else "content"
-                self.result_area.insert(tk.END, f"{node['result']}\n\n", tag)
+            # AI 回答内容
+            tag = "loading" if is_loading else "content"
+            self.result_area.insert(tk.END, f"{node['result']}\n", tag)
 
-                # 标记节点范围（用于追问时通过 tag 定位父节点）
-                line_start = self.result_area.index(tk.END + "-2l linestart")
-                self.result_area.tag_add(f"node_{node['id']}", line_start, tk.END + "-1c")
+            # 标记节点范围（用于追问时 tag 定位父节点）
+            self.result_area.tag_add(f"node_{node['id']}", "1.0", tk.END + "-1c")
 
             self.result_area.configure(state=tk.DISABLED)
+
+            # 侧边栏可见时同步刷新（高亮当前节点）
+            if self._sidebar_visible:
+                self._render_sidebar()
+
         except tk.TclError:
             pass
 
-    def _compute_prefix(self, node: dict) -> str:
-        """计算树连接线前缀"""
-        if node["depth"] == 0:
-            return ""
+    # ── 分支树侧边栏 ──────────────────────────────────
 
-        # 收集从根到父节点的"是否有后续兄弟"信息
-        is_last_chain = []
-        current = node
-        while current["parent_id"] is not None:
-            is_last_chain.append(current.get("is_last", True))
-            current = self._get_node(current["parent_id"])
-            if current is None:
-                break
-        is_last_chain.reverse()  # 从根到当前节点
-
-        # 构建前缀
-        prefix = ""
-        for i, is_last in enumerate(is_last_chain):
-            if i == len(is_last_chain) - 1:
-                # 当前节点本身
-                prefix += "└─ " if is_last else "├─ "
+    def _toggle_sidebar(self) -> None:
+        """切换侧边栏显示/隐藏"""
+        self._sidebar_visible = not self._sidebar_visible
+        if self._sidebar_visible:
+            # 拿到 outer 的已有子控件（排除 sidebar_frame 自身）
+            siblings = [c for c in self._sidebar_frame.master.winfo_children()
+                        if c is not self._sidebar_frame]
+            if siblings:
+                self._sidebar_frame.pack(fill=tk.Y, side=tk.LEFT,
+                                         before=siblings[0])
             else:
-                # 祖先层级
-                prefix += "   " if is_last else "│  "
-        return prefix
+                self._sidebar_frame.pack(fill=tk.Y, side=tk.LEFT)
+            self._render_sidebar()
+        else:
+            self._sidebar_frame.pack_forget()
+        self._update_sidebar_btn()
+
+    def _update_sidebar_btn(self) -> None:
+        """更新侧边栏按钮文字"""
+        if hasattr(self, "_sidebar_btn") and self._sidebar_btn is not None:
+            try:
+                self._sidebar_btn.configure(
+                    text="📂 关闭分支" if self._sidebar_visible else "📂 分支树")
+            except tk.TclError:
+                pass
+
+    def _walk_tree(self, parent_id=None):
+        """DFS 遍历树，子节点紧跟父节点（保证渲染顺序符合树结构）"""
+        children = [n for n in self._tree_nodes if n.get("parent_id") == parent_id]
+        for child in children:
+            yield child
+            yield from self._walk_tree(child["id"])
+
+    def _render_sidebar(self) -> None:
+        """渲染侧边栏树形列表到 Canvas（DFS 遍历 + tag_bind 可靠点击）"""
+        if self._sidebar_canvas is None:
+            return
+        try:
+            self._sidebar_canvas.delete("all")
+
+            if not self._tree_nodes:
+                return
+
+            y = 8
+            for node in self._walk_tree():
+                depth = node["depth"]
+                raw = node["text"].replace("\n", " ").strip()
+                text_preview = raw[:24] + "…" if len(raw) > 24 else raw
+                indent = "  " * depth
+                marker = "└ " if node.get("is_last") else "├ " if depth > 0 else ""
+
+                label = f"{indent}{marker}{text_preview}"
+
+                is_active = node["id"] == self._active_node_id
+                fill = C["accent"] if is_active else C["text"]
+                font = (FONT, 9, "bold") if is_active else (FONT, 9)
+
+                tag = f"side_{node['id']}"
+                self._sidebar_canvas.create_text(
+                    8, y, text=label, anchor="nw", fill=fill, font=font,
+                    tags=(tag, "side_item"),
+                )
+
+                # Canvas tag_bind — 原生支持，不会像 Text 那样被状态影响
+                self._sidebar_canvas.tag_bind(
+                    tag, "<Button-1>",
+                    lambda e, nid=node["id"]: self._jump_to_node(nid))
+                # 悬停指针
+                self._sidebar_canvas.tag_bind(
+                    tag, "<Enter>",
+                    lambda e: self._sidebar_canvas.configure(cursor="hand2"))
+                self._sidebar_canvas.tag_bind(
+                    tag, "<Leave>",
+                    lambda e: self._sidebar_canvas.configure(cursor=""))
+
+                y += 24
+
+            # 更新滚动区域
+            bbox = self._sidebar_canvas.bbox("all")
+            if bbox:
+                self._sidebar_canvas.configure(
+                    scrollregion=(0, 0, 200, bbox[3] + 8))
+
+        except tk.TclError:
+            pass
+
+    def _jump_to_node(self, node_id: int) -> None:
+        """切换到指定节点：设置活跃节点 → 重渲染结果区"""
+        if self._get_node(node_id) is None:
+            return
+        if node_id == self._active_node_id:
+            return  # 已经是活跃节点
+        self._active_node_id = node_id
+        self._render_tree()  # 内部会刷新 sidebar
 
     # ── 追问（选中结果文字 → 气泡弹窗） ──────────────
 
@@ -538,11 +656,8 @@ class FloatingWindow:
 
         self._hide_follow_up_bubble()
 
-        # 根据选中位置的 tag 找父节点
-        parent_id = self._find_parent_node_id()
-        parent_node = self._get_node(parent_id) if parent_id is not None else None
-        if parent_node is None and self._tree_nodes:
-            parent_node = self._tree_nodes[-1]
+        # 活跃节点即为追问的父节点
+        parent_node = self._get_node(self._active_node_id) if self._active_node_id is not None else None
 
         # 添加子节点
         self._add_node("follow_up", selected.strip(), "⏳ 正在追问，请稍候...",
@@ -557,20 +672,6 @@ class FloatingWindow:
                 prev_result,
                 self.current_mode,
             )
-
-    def _find_parent_node_id(self) -> int | None:
-        """从选区 tag 推断所属节点"""
-        try:
-            tags = self.result_area.tag_names(tk.SEL_FIRST)
-            for tag in tags:
-                if tag.startswith("node_"):
-                    return int(tag.split("_")[1])
-        except tk.TclError:
-            pass
-        # fallback：最后一个节点
-        if self._tree_nodes:
-            return self._tree_nodes[-1]["id"]
-        return None
 
     def _get_node(self, node_id: int) -> dict | None:
         """按 id 查找节点"""

@@ -10,6 +10,8 @@
 """
 
 import tkinter as tk
+import markdown
+from tkinterweb import HtmlFrame
 from config import MODES, MODE_TITLES, DEFAULT_MODE
 
 FONT = "Microsoft YaHei UI"
@@ -64,7 +66,7 @@ class FloatingWindow:
         self._inner: tk.Frame | None = None
         self._tab_widgets: dict | None = None
         self.preview_label: tk.Label | None = None
-        self.result_area: tk.Text | None = None
+        self.result_area: HtmlFrame | None = None
         self._drag_x = 0
         self._drag_y = 0
 
@@ -83,8 +85,8 @@ class FloatingWindow:
         self._on_copy: callable | None = None
         self._on_follow_up: callable | None = None
 
-        # 追问气泡
-        self._bubble: tk.Toplevel | None = None
+        # 右键菜单
+        self._context_menu: tk.Menu | None = None
 
         # 分支树侧边栏
         self._sidebar_visible = False
@@ -175,7 +177,7 @@ class FloatingWindow:
         self._on_follow_up = callback
 
     def hide(self, event=None) -> None:
-        self._hide_follow_up_bubble()
+        self._hide_context_menu()
         if self.window:
             try:
                 self.window.destroy()
@@ -311,25 +313,17 @@ class FloatingWindow:
         container = tk.Frame(outer, bg=C["bg"])
         container.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
 
-        self.result_area = tk.Text(
-            container, bg=C["bg"], fg=C["text"],
-            insertbackground=C["text"], font=(FONT, 11),
-            wrap=tk.WORD, bd=0, padx=14, pady=10,
-            selectbackground="#bfdbfe", selectforeground=C["text"],
-            exportselection=False,  # 失焦不丢选中（配合追问气泡）
-            relief=tk.FLAT,
+        self.result_area = HtmlFrame(
+            container,
+            messages_enabled=False,  # 不显示内部调试信息
+            vertical_scrollbar=True,
         )
         self.result_area.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
 
-        # 选中文本时弹出追问气泡
-        self.result_area.bind("<<Selection>>", self._on_result_select)
-
-        # 滚动条
-        sb = tk.Scrollbar(container, command=self.result_area.yview,
-                          bg=C["scroll_bg"], troughcolor=C["bg"],
-                          activebackground=C["subtext"])
-        sb.pack(fill=tk.Y, side=tk.RIGHT)
-        self.result_area.configure(yscrollcommand=sb.set)
+        # 右键菜单触发追问（HtmlFrame 选择文本后右键即可）
+        self.result_area.bind("<Button-3>", self._on_result_right_click)
+        # 左键点击关闭右键菜单
+        self.result_area.bind("<Button-1>", self._hide_context_menu)
 
         # 渲染已有树（如果有）
         self._render_tree()
@@ -369,7 +363,7 @@ class FloatingWindow:
         _make_btn("🔄 重试", self._retry)
 
         # 快捷键提示
-        hint = tk.Label(bar, text="Esc 关闭  |  Enter 复制",
+        hint = tk.Label(bar, text="Esc 关闭 | Enter 复制 | 右键追问",
                         bg=C["surface"], fg=C["subtext"], font=(FONT, 9))
         hint.pack(side=tk.RIGHT, padx=10)
 
@@ -428,36 +422,23 @@ class FloatingWindow:
         return node
 
     def _render_tree(self) -> None:
-        """渲染当前活跃节点到结果区（单节点显示，非内联树）"""
+        """渲染当前活跃节点到结果区（Markdown → HTML）"""
         if self.window is None or self.result_area is None:
             return
         try:
-            self.result_area.configure(state=tk.NORMAL)
-            self.result_area.delete("1.0", tk.END)
-
-            # 配置标签样式
-            self.result_area.tag_configure("header", font=(FONT, 10, "bold"),
-                                           foreground=C["text"], spacing3=6)
-            self.result_area.tag_configure("sep", font=(FONT, 7),
-                                           foreground=C["border"])
-            self.result_area.tag_configure("content", font=(FONT, 11),
-                                           foreground=C["text"],
-                                           lmargin1=0, lmargin2=0)
-            self.result_area.tag_configure("loading", font=(FONT, 10, "italic"),
-                                           foreground=C["subtext"])
-            self.result_area.tag_configure("depth_hint", font=(FONT, 9),
-                                           foreground=C["subtext"])
-
             if not self._tree_nodes or self._active_node_id is None:
-                self.result_area.configure(state=tk.DISABLED)
+                self.result_area.load_html(self._wrap_html("<p style='color:#9ca3af'>暂无内容</p>"))
                 return
 
             node = self._get_node(self._active_node_id)
             if node is None:
-                self.result_area.configure(state=tk.DISABLED)
+                self.result_area.load_html(self._wrap_html("<p style='color:#9ca3af'>暂无内容</p>"))
                 return
 
             is_loading = "⏳" in node.get("result", "")
+
+            # 构建 Markdown 内容
+            md_parts = []
 
             # 追问层级提示
             if node["depth"] > 0:
@@ -466,26 +447,30 @@ class FloatingWindow:
                     parent_label = parent["text"].replace("\n", " ").strip()
                     if len(parent_label) > 50:
                         parent_label = parent_label[:50] + "…"
-                    self.result_area.insert(tk.END, f"↳ 追问自：{parent_label}\n", "depth_hint")
+                    md_parts.append(f"*↳ 追问自：{parent_label}*")
 
             # 节点头 = 划词文本
             label = node["text"].replace("\n", " ").strip()
             if len(label) > 100:
                 label = label[:100] + "…"
-            self.result_area.insert(tk.END, f"{label}\n",
-                                   "loading" if is_loading else "header")
+            md_parts.append(f"### {label}")
 
             # 分隔线
-            self.result_area.insert(tk.END, f"{'─' * 40}\n", "sep")
+            md_parts.append("---")
 
-            # AI 回答内容
-            tag = "loading" if is_loading else "content"
-            self.result_area.insert(tk.END, f"{node['result']}\n", tag)
+            # AI 回答内容（直接使用 Markdown）
+            if is_loading:
+                md_parts.append(f"*{node['result']}*")
+            else:
+                md_parts.append(node["result"])
 
-            # 标记节点范围（用于追问时 tag 定位父节点）
-            self.result_area.tag_add(f"node_{node['id']}", "1.0", tk.END + "-1c")
-
-            self.result_area.configure(state=tk.DISABLED)
+            # MD → HTML
+            md_content = "\n\n".join(md_parts)
+            html_body = markdown.markdown(
+                md_content,
+                extensions=["fenced_code", "tables", "codehilite"],
+            )
+            self.result_area.load_html(self._wrap_html(html_body))
 
             # 侧边栏可见时同步刷新（高亮当前节点）
             if self._sidebar_visible:
@@ -493,6 +478,48 @@ class FloatingWindow:
 
         except tk.TclError:
             pass
+
+    @staticmethod
+    def _wrap_html(body: str) -> str:
+        """将 HTML body 包裹为完整文档，注入与主题匹配的 CSS"""
+        return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="
+    font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif;
+    font-size: 13px; color: {C['text']}; background: {C['bg']};
+    margin: 0; padding: 12px 16px; line-height: 1.7;
+">
+<style>
+    h1, h2, h3, h4 {{ color: {C['text']}; margin-top: 12px; margin-bottom: 6px; }}
+    h3 {{ font-size: 14px; }}
+    hr {{ border: none; border-top: 1px solid {C['border']}; margin: 12px 0; }}
+    p {{ margin: 6px 0; }}
+    a {{ color: {C['accent']}; }}
+    blockquote {{
+        border-left: 3px solid {C['accent']}; margin: 8px 0; padding: 2px 12px;
+        color: {C['subtext']};
+    }}
+    code {{
+        background: {C['surface']}; padding: 2px 6px; border-radius: 4px;
+        font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 12px;
+    }}
+    pre {{
+        background: {C['surface']}; padding: 12px; border-radius: 6px;
+        overflow-x: auto; border: 1px solid {C['border']};
+    }}
+    pre code {{ background: none; padding: 0; }}
+    table {{ border-collapse: collapse; width: 100%; margin: 8px 0; }}
+    th, td {{ border: 1px solid {C['border']}; padding: 6px 10px; text-align: left; }}
+    th {{ background: {C['surface']}; font-weight: bold; }}
+    ul, ol {{ padding-left: 20px; margin: 4px 0; }}
+    li {{ margin: 2px 0; }}
+    strong {{ color: {C['text']}; }}
+    em {{ color: {C['subtext']}; }}
+</style>
+{body}
+</body>
+</html>"""
 
     # ── 分支树侧边栏 ──────────────────────────────────
 
@@ -591,83 +618,54 @@ class FloatingWindow:
         self._active_node_id = node_id
         self._render_tree()  # 内部会刷新 sidebar
 
-    # ── 追问（选中结果文字 → 气泡弹窗） ──────────────
+    # ── 追问（右键菜单） ──────────────────────────────
 
-    def _on_result_select(self, event=None) -> None:
-        """检测结果区文本选中 → 显示追问气泡"""
+    def _on_result_right_click(self, event=None) -> None:
+        """右键菜单：如果选中了文字，显示'追问'选项"""
         try:
-            sel = self.result_area.get(tk.SEL_FIRST, tk.SEL_LAST)
-            if sel and sel.strip():
-                self._show_follow_up_bubble()
-                return
-        except tk.TclError:
-            pass
-        self._hide_follow_up_bubble()
-
-    def _show_follow_up_bubble(self) -> None:
-        """显示追问气泡（选中文下方弹出的小按钮）"""
-        if self._bubble is not None:
-            return  # 已显示
-
-        # 计算气泡位置（选中位置下方）
-        try:
-            bbox = self.result_area.bbox("sel.first")
-            if bbox:
-                x = self.result_area.winfo_rootx() + bbox[0]
-                y = self.result_area.winfo_rooty() + bbox[1] + bbox[3] + 6
-            else:
-                x = self.window.winfo_pointerx()
-                y = self.window.winfo_pointery() + 16
-        except tk.TclError:
-            x = self.window.winfo_pointerx()
-            y = self.window.winfo_pointery() + 16
-
-        bubble = tk.Toplevel(self.root)
-        bubble.overrideredirect(True)
-        bubble.attributes("-topmost", True)
-        bubble.configure(bg=C["accent"])
-
-        btn = tk.Label(bubble, text="💬 追问", bg=C["accent"], fg="#ffffff",
-                       font=(FONT, 10), padx=10, pady=3, cursor="hand2")
-        btn.pack()
-        btn.bind("<Button-1>", lambda e: self._do_follow_up())
-
-        bubble.geometry(f"+{x}+{y}")
-        bubble.bind("<FocusOut>", lambda e: self._hide_follow_up_bubble())
-        self._bubble = bubble
-
-    def _hide_follow_up_bubble(self) -> None:
-        """关闭追问气泡"""
-        if self._bubble is not None:
-            try:
-                self._bubble.destroy()
-            except tk.TclError:
-                pass
-            self._bubble = None
-
-    def _do_follow_up(self) -> None:
-        """执行追问：从选中位置找父节点 → 添加子节点 → 发起请求"""
-        try:
-            selected = self.result_area.get(tk.SEL_FIRST, tk.SEL_LAST)
-        except tk.TclError:
+            selected = self.result_area.get_selection()
+        except Exception:
             return
         if not selected or not selected.strip():
             return
 
-        self._hide_follow_up_bubble()
+        menu = tk.Menu(self.window, tearoff=0,
+                       bg=C["surface"], fg=C["text"],
+                       activebackground=C["accent"], activeforeground="#ffffff",
+                       font=(FONT, 10))
+        menu.add_command(label="💬 追问",
+                         command=lambda s=selected.strip(): self._do_follow_up(s))
+        self._context_menu = menu
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _hide_context_menu(self, event=None) -> None:
+        """左键点击时关闭右键菜单"""
+        if hasattr(self, "_context_menu") and self._context_menu is not None:
+            try:
+                self._context_menu.unpost()
+            except tk.TclError:
+                pass
+            self._context_menu = None
+
+    def _do_follow_up(self, selected: str) -> None:
+        """执行追问：基于选中的文字创建子节点 → 发起请求"""
+        self._hide_context_menu()
 
         # 活跃节点即为追问的父节点
         parent_node = self._get_node(self._active_node_id) if self._active_node_id is not None else None
 
         # 添加子节点
-        self._add_node("follow_up", selected.strip(), "⏳ 正在追问，请稍候...",
+        self._add_node("follow_up", selected, "⏳ 正在追问，请稍候...",
                        self.current_mode, parent_node["id"] if parent_node else None)
 
         # 通知外部
         if self._on_follow_up:
             prev_result = parent_node["result"] if parent_node else ""
             self._on_follow_up(
-                selected.strip(),
+                selected,
                 self.original_text,
                 prev_result,
                 self.current_mode,

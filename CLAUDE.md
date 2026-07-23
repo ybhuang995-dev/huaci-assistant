@@ -8,6 +8,7 @@
 pip install -r requirements.txt   # 安装依赖（首次）
 python main.py                    # 启动（托盘常驻，Ctrl+C 复制触发）
 run.bat                           # Windows 一键启动
+python test_ui.py                 # 诊断用：独立测试悬浮窗组件渲染
 ```
 
 ## 项目定位
@@ -26,13 +27,12 @@ Windows 桌面工具：在任意应用中选中文字，Ctrl+C 复制，自动�
     │        ┌──────────────────────────────────────┐
     │        │ [翻译] [提问] [润色] [总结]      [✕] │
     │        ├──────────────────────────────────────┤
-    │        │ ← 侧边栏  │  结果区（单节点，可滚动）│
+    │        │ ← 侧边栏  │  对话树结果区（可滚动）  │
     │        │ (📂 切换) │                          │
-    │        │           │ ↳ 追问自：...            │
-    │        │  划词文本  │ 复制的文字               │
-    │        │   ├ 追问1  │ ────────────             │
-    │        │   │ └ 追问 │ AI 回答内容              │
-    │        │   └ 追问2  │                          │
+    │        │           │ 复制的文字 ← 节点名       │
+    │        │  划词文本  │ ────────────             │
+    │        │   ├ 追问1  │ AI 回答内容              │
+    │        │   └ 追问2  │      └─ 追问的追问       │
     │        ├──────────────────────────────────────┤
     │        │ [📋 复制] [📂 分支树] [🔄 重试]      │
     │        └──────────────────────────────────────┘
@@ -94,7 +94,7 @@ node = {
     "id": int,           # 自增唯一
     "type": str,         # "query" | "follow_up"（数据保留，渲染不区分）
     "text": str,         # 触发本节点的文本（复制的原文 or 选中的追问文字）
-    "result": str,       # AI 返回的回答（缓存，切换即时显示）
+    "result": str,       # AI 返回的回答
     "mode": str,         # "translate" | "ask" | "polish" | "summarize"
     "parent_id": int|None,  # 父节点，None = 根
     "depth": int,        # 树深度
@@ -102,25 +102,12 @@ node = {
 }
 ```
 
-**单节点结果区**（`_render_tree` + `_active_node_id`）：
-- 结果区一次只显示一个节点的内容（而非所有节点内联展开）
-- `_active_node_id` 追踪当前显示的节点
-- 追问时显示 `↳ 追问自：父节点文本` 层级提示
-- 每个节点的 LLM 回复缓存在 `node["result"]`，切换即时显示
-
-**侧边栏**（Canvas + DFS 遍历 + tag_bind）：
-- 「📂 分支树」按钮切换 200px 左侧面板
-- **Canvas 控件**（非 Text）：`create_text()` 绘制节点，`tag_bind("<Button-1>")` 处理点击——Canvas 的 tag_bind 天然可靠，不会像 Text 控件那样被 DISABLED 状态吞掉事件
-- **DFS 遍历**（`_walk_tree`）：`_tree_nodes` 列表按添加时间排序，但渲染必须按树结构（父→子→兄弟）。`_walk_tree()` 生成器做 DFS，保证子节点紧跟父节点显示
-- 节点名 = 划词文本（24 字截断），缩进 + `├ └` 显示层级
-- 活跃节点蓝色加粗高亮（`"node_active"` tag）
-- 点击节点 → `_jump_to_node(nid)` → 更新 `_active_node_id` → `_render_tree()` 重渲染结果区 + `_render_sidebar()` 刷新高亮
+**树渲染**（`_render_tree`）：用 `├─` `└─` `│` 连接符内联渲染到 `result_area` Text 控件。每个节点前设 `mark("n{id}")` 用于侧边栏跳转定位。节点名 = 划词文本（不区分 query/follow_up 类型）。
 
 **追问回调链**：
 ```
 用户划选文字 → "💬 追问"气泡 → _do_follow_up()
-  → 以 _active_node_id 为父节点（不再靠 tag 查找）
-  → _add_node("follow_up", selected_text, ..., parent_id)
+  → _add_node("follow_up", selected_text, ...)
   → _on_follow_up(selected, original_text, previous_result, mode)
   → main.py 将 (selected, mode, qid, (original, previous)) 放入 _work_queue
   → Worker 调用 engine.follow_up()
@@ -128,10 +115,14 @@ node = {
 
 **`engine.follow_up()`**：传入原文 + 上次回答 + 选中文字，构造带上下文的 prompt 再调用 API。
 
+**侧边栏**（`_toggle_sidebar` / `_render_sidebar` / `_jump_to_node`）：
+- 「📂 分支树」按钮切换 200px 左侧面板
+- 节点名 = 划词文本（与主结果区一致），缩进 + `├ └` 显示层级
+- 点击节点 → `result_area.see("n{id}")` 跳转
+
 ## tkinter 注意事项
 
 - **`tk.Button` 不可见**：部分 Windows 11 系统上 `tk.Button(bd=0)` 不渲染。操作栏统一用 `tk.Label` + `<Button-1>` 绑定代替，与标签栏一致
-- **Text 控件点击不可靠**：`tk.Text` 的 `tag_bind` 和 widget 级 `<Button-1>` 在 DISABLED/NORMAL 状态下都可能不触发。可点击列表用 `tk.Canvas` + `create_text()` + `tag_bind` 替代
 - **BOTTOM pack 几何 bug**：当 `_inner` 内同时有 `expand=True` 的 TOP 控件 + BOTTOM 控件时，BOTTOM 可能被挤没（Windows 11 部分 tkinter 版本）。两个措施缺一不可：
   1. 容器 Frame 作为唯一的 BOTTOM 子控件 + `pack_propagate(False)` 锁死高度
   2. **调用顺序**：BOTTOM 控件必须先于 `expand=True` 的 TOP 控件 pack（在 `show()` 里 `_build_action_bar()` 在 `_build_result_area()` 之前调用）
@@ -154,13 +145,11 @@ node = {
 - 剪贴板监听 + 8 条正则智能过滤
 - DeepSeek API 4 种模式 + `follow_up()` 上下文追问
 - 悬浮窗：标签栏 + 原文预览 + 结果滚动区 + 操作栏
-- 对话树：单节点结果区 + `_active_node_id` 切换 + 节点结果缓存
-- 侧边栏：Canvas DFS 树渲染 + tag_bind 点击导航 + 活跃节点高亮
-- 追问气泡（选文字 → 💬 追问）+ 以活跃节点为父节点
+- 对话树内联渲染 + 侧边栏树导航
+- 追问气泡（选文字 → 💬 追问）
 - 系统托盘 + 右键退出
 - 双队列 + 查询计数器
 - Enter 复制、Esc 关闭、拖拽移动
-- `_walk_tree()` DFS 生成器：保证侧边栏渲染顺序符合树结构（子节点紧跟父节点）
 
 ### 🔜 Phase 2
 - SSE 流式输出（`requests` → `httpx`）

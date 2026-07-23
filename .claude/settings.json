@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "example-skills@anthropic-agent-skills": false,
+    "pyright-lsp@claude-plugins-official": true
+  }
+}

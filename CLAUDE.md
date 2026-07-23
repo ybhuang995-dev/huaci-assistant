@@ -47,7 +47,7 @@ Windows 桌面工具：在任意应用中选中文字，Ctrl+C 复制，自动�
 - **语言**：Python 3.10+
 - **UI**：`tkinter`（无边框 `overrideredirect` Toplevel，置顶，可拖拽）
 - **剪贴板**：`ctypes` 直接调用 Windows API（`OpenClipboard`/`GetClipboardData`/`GlobalLock`），轮询 400ms
-- **LLM**：DeepSeek API（OpenAI 兼容），`requests` 非流式调用
+- **LLM**：DeepSeek API（OpenAI 兼容），`httpx` SSE 流式调用
 - **托盘**：`pystray` + `Pillow`
 - **配置**：`python-dotenv` 加载 `.env`
 
@@ -151,12 +151,11 @@ node = {
 - 双队列 + 查询计数器
 - Enter 复制、Esc 关闭、拖拽移动
 
-### 🔜 Phase 2
+### ✅ Phase 2
 - SSE 流式输出（`requests` → `httpx`）
 - 单词检测 → 词典模式（发音+词性+例句）
-- 全局热键补充
-- 侧边栏键盘导航（↑↓←→ 切换节点）
-- 子树折叠/展开
+- 托盘菜单暂停/恢复监听（`monitor.pause()` / `resume()`）
+- 侧边栏子树折叠/展开（`▶` / `▼` 点击切换）
 
 ### 📋 Phase 3
 - 多模型切换 / 自定义 Prompt / SQLite 历史

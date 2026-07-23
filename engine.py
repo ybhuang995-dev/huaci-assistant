@@ -3,9 +3,11 @@ LLM 引擎模块
 -----------
 引擎抽象 + DeepSeek 实现。
 所有模式（翻译/提问/润色/总结）共用同一调用逻辑，差异只在 system prompt。
+支持非流式（query）和 SSE 流式（query_stream）两种调用。
 """
 
-import requests
+import json
+import httpx
 from config import Config, MODES
 
 
@@ -18,25 +20,31 @@ class DeepSeekEngine:
         self.model = Config.DEEPSEEK_MODEL
 
     def query(self, text: str, mode: str) -> str:
-        """
-        以指定模式查询 API。
+        """非流式查询（保持兼容）"""
+        parts = list(self.query_stream(text, mode))
+        return "".join(parts) if parts else "⚠️ 空响应"
 
-        Args:
-            text: 用户输入的文本
-            mode: 模式 key，如 "translate" / "ask" / "polish" / "summarize"
+    def follow_up(self, original_text: str, previous_result: str,
+                  selected_text: str, mode: str) -> str:
+        """非流式追问（保持兼容）"""
+        parts = list(self.follow_up_stream(
+            original_text, previous_result, selected_text, mode))
+        return "".join(parts) if parts else "⚠️ 空响应"
 
-        Returns:
-            API 返回的文本结果
-        """
+    # ── 流式（SSE） ──────────────────────────────────────
+
+    def query_stream(self, text: str, mode: str):
+        """流式查询，逐 chunk yield delta 文本"""
         mode_config = MODES.get(mode, MODES["ask"])
         system_prompt = mode_config["system_prompt"]
 
         if not self.api_key:
-            return (
+            yield (
                 "❌ 未配置 API Key\n\n"
                 "请复制 .env.example 为 .env，填入 DeepSeek API Key。\n"
                 "获取：https://platform.deepseek.com/api_keys"
             )
+            return
 
         url = f"{self.base_url}/chat/completions"
         headers = {
@@ -49,53 +57,22 @@ class DeepSeekEngine:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text},
             ],
-            "stream": False,
+            "stream": True,
             "temperature": 0.3,
         }
 
-        try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=60)
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
+        yield from self._stream_request(url, headers, payload)
 
-        except requests.exceptions.Timeout:
-            return "⏱️ 请求超时，请重试。"
-        except requests.exceptions.ConnectionError:
-            return "🌐 网络连接失败，请检查网络或代理设置。"
-        except requests.exceptions.HTTPError:
-            status = resp.status_code
-            if status == 401:
-                return "🔑 API Key 无效，请检查 .env 中的 DEEPSEEK_API_KEY。"
-            elif status == 429:
-                return "🔄 请求过于频繁，请稍后重试。"
-            elif status == 402:
-                return "💰 API 余额不足，请充值。"
-            return f"⚠️ API 错误（HTTP {status}）"
-        except Exception as e:
-            return f"❌ 未知错误：{e}"
-
-
-    def follow_up(self, original_text: str, previous_result: str,
-                  selected_text: str, mode: str) -> str:
-        """
-        追问模式：基于原文和上次回答，针对选中文本进一步提问。
-
-        Args:
-            original_text: 用户最初复制的原文
-            previous_result: AI 上次的回答
-            selected_text: 用户在回答中选中的文本
-            mode: 当前模式 key
-
-        Returns:
-            API 返回的追问结果
-        """
+    def follow_up_stream(self, original_text: str, previous_result: str,
+                         selected_text: str, mode: str):
+        """流式追问"""
         mode_config = MODES.get(mode, MODES["ask"])
         mode_label = mode_config["label"]
         system_prompt = mode_config["system_prompt"]
 
         if not self.api_key:
-            return "❌ 未配置 API Key"
+            yield "❌ 未配置 API Key"
+            return
 
         prompt = (
             f"用户之前选中了以下原文，你以「{mode_label}」模式给出了回答。\n\n"
@@ -117,31 +94,53 @@ class DeepSeekEngine:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
-            "stream": False,
+            "stream": True,
             "temperature": 0.3,
         }
 
-        try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=60)
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
+        yield from self._stream_request(url, headers, payload)
 
-        except requests.exceptions.Timeout:
-            return "⏱️ 请求超时，请重试。"
-        except requests.exceptions.ConnectionError:
-            return "🌐 网络连接失败，请检查网络或代理设置。"
-        except requests.exceptions.HTTPError:
-            status = resp.status_code
+    def _stream_request(self, url: str, headers: dict, payload: dict):
+        """发送 SSE 流式请求，逐 chunk yield content delta"""
+        try:
+            with httpx.stream("POST", url, json=payload, headers=headers,
+                              timeout=60.0) as resp:
+                resp.raise_for_status()
+                for line in resp.iter_lines():
+                    line = line.strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        return
+                    try:
+                        chunk = json.loads(data_str)
+                        delta = (
+                            chunk.get("choices", [{}])[0]
+                            .get("delta", {})
+                            .get("content", "")
+                        )
+                        if delta:
+                            yield delta
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
+
+        except httpx.TimeoutException:
+            yield "⏱️ 请求超时，请重试。"
+        except httpx.ConnectError:
+            yield "🌐 网络连接失败，请检查网络或代理设置。"
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
             if status == 401:
-                return "🔑 API Key 无效。"
+                yield "🔑 API Key 无效，请检查 .env 中的 DEEPSEEK_API_KEY。"
             elif status == 429:
-                return "🔄 请求过于频繁，请稍后重试。"
+                yield "🔄 请求过于频繁，请稍后重试。"
             elif status == 402:
-                return "💰 API 余额不足，请充值。"
-            return f"⚠️ API 错误（HTTP {status}）"
+                yield "💰 API 余额不足，请充值。"
+            else:
+                yield f"⚠️ API 错误（HTTP {status}）"
         except Exception as e:
-            return f"❌ 未知错误：{e}"
+            yield f"❌ 未知错误：{e}"
 
 
 # 全局单例

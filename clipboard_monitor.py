@@ -88,6 +88,7 @@ class ClipboardMonitor:
     def __init__(self, on_text: callable):
         self._callback = on_text
         self._running = False
+        self._paused = False
         self._thread: threading.Thread | None = None
         self._last_text = ""
         self._last_triggered = ""
@@ -112,6 +113,19 @@ class ClipboardMonitor:
         self._running = False
         if self._thread:
             self._thread.join(timeout=1.0)
+
+    def pause(self) -> None:
+        """暂停监听（复制不弹窗）"""
+        self._paused = True
+        _log("monitor: PAUSED")
+
+    def resume(self) -> None:
+        """恢复监听"""
+        self._paused = False
+        _log("monitor: RESUMED")
+
+    def is_paused(self) -> bool:
+        return self._paused
 
     def mark_as_seen(self, text: str) -> None:
         """标记文本为'已见'，避免重复触发"""
@@ -147,6 +161,13 @@ class ClipboardMonitor:
 
             # 智能过滤
             if not should_trigger(text):
+                time.sleep(Config.POLL_INTERVAL)
+                continue
+
+            # 暂停检查
+            if self._paused:
+                self._last_triggered = text  # 记录避免恢复后重复触发
+                _log("poll: paused, skip callback")
                 time.sleep(Config.POLL_INTERVAL)
                 continue
 

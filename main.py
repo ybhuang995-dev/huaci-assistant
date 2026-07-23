@@ -22,7 +22,7 @@ import tkinter as tk
 import pystray
 from PIL import Image, ImageDraw
 
-from config import Config, DEFAULT_MODE
+from config import Config, DEFAULT_MODE, is_single_english_word
 from clipboard_monitor import ClipboardMonitor, _log
 from engine import engine
 from floating_window import FloatingWindow
@@ -52,6 +52,10 @@ _query_lock = threading.Lock()
 # 系统托盘
 # ═══════════════════════════════════════════════════════════
 
+_tray_icon = None
+_monitor_ref = None  # 由 main() 设置
+
+
 def _create_tray_icon() -> Image.Image:
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -61,14 +65,38 @@ def _create_tray_icon() -> Image.Image:
     return img
 
 
-def _run_tray() -> None:
-    menu = pystray.Menu(
+def _build_tray_menu():
+    """根据暂停状态动态构建托盘菜单"""
+    is_paused = _monitor_ref.is_paused() if _monitor_ref else False
+    return pystray.Menu(
         pystray.MenuItem("划词助手 — 复制即翻译", lambda: None, enabled=False),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem(
+            "🔊 恢复监听" if is_paused else "🔇 暂停监听",
+            _on_toggle_pause,
+        ),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("退出", _on_tray_exit),
     )
+
+
+def _on_toggle_pause(icon, item=None) -> None:
+    """暂停/恢复切换"""
+    if _monitor_ref is None:
+        return
+    if _monitor_ref.is_paused():
+        _monitor_ref.resume()
+    else:
+        _monitor_ref.pause()
+    icon.update_menu(_build_tray_menu())
+
+
+def _run_tray() -> None:
+    global _tray_icon
     icon = pystray.Icon("划词助手", _create_tray_icon(),
-                        "划词助手 — Ctrl+C 复制文字自动弹出", menu)
+                        "划词助手 — Ctrl+C 复制文字自动弹出",
+                        _build_tray_menu())
+    _tray_icon = icon
     icon.run()
 
 
@@ -91,7 +119,7 @@ def _on_clipboard_change(text: str) -> None:
 # ═══════════════════════════════════════════════════════════
 
 def _worker(root: tk.Tk, window: FloatingWindow) -> None:
-    """工作线程：处理 API 查询 / 追问"""
+    """工作线程：处理 API 查询 / 追问（SSE 流式）"""
     while not _exit_flag.is_set():
         try:
             task = _work_queue.get(timeout=0.5)
@@ -104,20 +132,26 @@ def _worker(root: tk.Tk, window: FloatingWindow) -> None:
         try:
             if follow_up_data:
                 original, previous = follow_up_data
-                result = engine.follow_up(original, previous, text, mode)
+                stream = engine.follow_up_stream(original, previous, text, mode)
             else:
-                result = engine.query(text, mode)
+                stream = engine.query_stream(text, mode)
+
+            accumulated = ""
+            for chunk in stream:
+                with _query_lock:
+                    if query_id != _query_counter:
+                        _log(f"WORKER: stream aborted (stale query {query_id})")
+                        accumulated = ""  # 丢弃累积
+                        break
+                accumulated += chunk
+                # lambda 默认参数捕获当前值，避免闭包延迟绑定
+                root.after(0, lambda r=accumulated: window.update_result(r))
+
         except Exception as e:
-            result = f"❌ 查询出错：{e}"
+            root.after(0, lambda e=e: window.update_result(f"❌ 查询出错：{e}"))
 
-        # 检查是否已被更新的查询取代
-        with _query_lock:
-            if query_id != _query_counter:
-                _log(f"WORKER: result discarded (stale query {query_id})")
-                continue
-
-        _log(f"WORKER: result ready, len={len(result)}")
-        root.after(0, lambda r=result: window.update_result(r))
+        if accumulated:
+            _log(f"WORKER: stream done, total len={len(accumulated)}")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -169,13 +203,16 @@ def _start_query_for_text(root: tk.Tk, window: FloatingWindow,
         _query_counter += 1
         qid = _query_counter
 
-    _log(f"MAIN: show window for [{text[:60]}], qid={qid}")
+    # 单词检测：单个英文单词 → 自动切换词典模式
+    mode = "dict" if is_single_english_word(text) else DEFAULT_MODE
+
+    _log(f"MAIN: show window for [{text[:60]}], mode={mode}, qid={qid}")
 
     # 显示悬浮窗（加载状态）
-    window.show(text, "⏳ 正在处理，请稍候...", mode=DEFAULT_MODE)
+    window.show(text, "⏳ 正在处理，请稍候...", mode=mode)
 
     # 放入工作队列
-    _work_queue.put((text, DEFAULT_MODE, qid, None))
+    _work_queue.put((text, mode, qid, None))
 
 
 # ═══════════════════════════════════════════════════════════
@@ -225,7 +262,9 @@ def main() -> None:
     window = FloatingWindow(root)
 
     # 剪贴板监听
+    global _monitor_ref
     monitor = ClipboardMonitor(on_text=_on_clipboard_change)
+    _monitor_ref = monitor
 
     # 悬浮窗回调
     window.set_on_mode_switch(_make_mode_switch_handler(window))

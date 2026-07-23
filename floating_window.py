@@ -39,6 +39,7 @@ MODE_ACCENT = {
     "ask": C["accent_purple"],
     "polish": C["accent_green"],
     "summarize": C["accent_yellow"],
+    "dict": "#ec4899",  # 粉色
 }
 
 
@@ -91,6 +92,7 @@ class FloatingWindow:
         # 分支树侧边栏
         self._sidebar_visible = False
         self._sidebar_canvas: tk.Canvas | None = None
+        self._collapsed_nodes: set = set()  # 已折叠的节点 ID
 
     # ── 辅助方法 ────────────────────────────────────────
 
@@ -191,6 +193,7 @@ class FloatingWindow:
             self._sidebar_canvas = None
             self._sidebar_btn = None
             self._sidebar_visible = False
+            self._collapsed_nodes = set()
             self._active_node_id = None
 
     # ── 标签栏 ──────────────────────────────────────────
@@ -550,14 +553,15 @@ class FloatingWindow:
                 pass
 
     def _walk_tree(self, parent_id=None):
-        """DFS 遍历树，子节点紧跟父节点（保证渲染顺序符合树结构）"""
+        """DFS 遍历树，子节点紧跟父节点。跳过折叠节点的子树。"""
         children = [n for n in self._tree_nodes if n.get("parent_id") == parent_id]
         for child in children:
             yield child
-            yield from self._walk_tree(child["id"])
+            if child["id"] not in self._collapsed_nodes:
+                yield from self._walk_tree(child["id"])
 
     def _render_sidebar(self) -> None:
-        """渲染侧边栏树形列表到 Canvas（DFS 遍历 + tag_bind 可靠点击）"""
+        """渲染侧边栏树形列表到 Canvas（支持子树折叠/展开）"""
         if self._sidebar_canvas is None:
             return
         try:
@@ -566,31 +570,64 @@ class FloatingWindow:
             if not self._tree_nodes:
                 return
 
+            # 预先算好每个节点是否有子节点
+            child_ids = {n.get("parent_id") for n in self._tree_nodes if n.get("parent_id") is not None}
+
             y = 8
             for node in self._walk_tree():
                 depth = node["depth"]
+                nid = node["id"]
+                has_children = nid in child_ids
+                is_collapsed = nid in self._collapsed_nodes
+
                 raw = node["text"].replace("\n", " ").strip()
                 text_preview = raw[:24] + "…" if len(raw) > 24 else raw
                 indent = "  " * depth
                 marker = "└ " if node.get("is_last") else "├ " if depth > 0 else ""
 
-                label = f"{indent}{marker}{text_preview}"
+                # ── 折叠/展开标记 ──
+                x_label = 8
+                if has_children:
+                    toggle_char = "▶" if is_collapsed else "▼"
+                    toggle_tag = f"toggle_{nid}"
+                    self._sidebar_canvas.create_text(
+                        8, y, text=toggle_char, anchor="nw",
+                        fill=C["subtext"], font=(FONT, 9),
+                        tags=(toggle_tag, "side_item"),
+                    )
+                    self._sidebar_canvas.tag_bind(
+                        toggle_tag, "<Button-1>",
+                        lambda e, nid=nid: self._toggle_collapse(nid))
+                    self._sidebar_canvas.tag_bind(
+                        toggle_tag, "<Enter>",
+                        lambda e: self._sidebar_canvas.configure(cursor="hand2"))
+                    self._sidebar_canvas.tag_bind(
+                        toggle_tag, "<Leave>",
+                        lambda e: self._sidebar_canvas.configure(cursor=""))
+                    x_label = 24  # 给 toggle 留空间
+                elif depth > 0:
+                    # 叶子节点：把 marker 放在 toggle 位置
+                    self._sidebar_canvas.create_text(
+                        8, y, text=marker.replace(" ", ""), anchor="nw",
+                        fill=C["border"], font=(FONT, 9),
+                        tags=("side_item",),
+                    )
+                    x_label = 24
 
-                is_active = node["id"] == self._active_node_id
+                # ── 节点标签 ──
+                label = f"{indent}{marker if not has_children else ''}{text_preview}"
+                is_active = nid == self._active_node_id
                 fill = C["accent"] if is_active else C["text"]
                 font = (FONT, 9, "bold") if is_active else (FONT, 9)
 
-                tag = f"side_{node['id']}"
+                tag = f"side_{nid}"
                 self._sidebar_canvas.create_text(
-                    8, y, text=label, anchor="nw", fill=fill, font=font,
+                    x_label, y, text=label, anchor="nw", fill=fill, font=font,
                     tags=(tag, "side_item"),
                 )
-
-                # Canvas tag_bind — 原生支持，不会像 Text 那样被状态影响
                 self._sidebar_canvas.tag_bind(
                     tag, "<Button-1>",
-                    lambda e, nid=node["id"]: self._jump_to_node(nid))
-                # 悬停指针
+                    lambda e, nid=nid: self._jump_to_node(nid))
                 self._sidebar_canvas.tag_bind(
                     tag, "<Enter>",
                     lambda e: self._sidebar_canvas.configure(cursor="hand2"))
@@ -608,6 +645,14 @@ class FloatingWindow:
 
         except tk.TclError:
             pass
+
+    def _toggle_collapse(self, node_id: int) -> None:
+        """切换节点的折叠/展开状态"""
+        if node_id in self._collapsed_nodes:
+            self._collapsed_nodes.discard(node_id)
+        else:
+            self._collapsed_nodes.add(node_id)
+        self._render_sidebar()
 
     def _jump_to_node(self, node_id: int) -> None:
         """切换到指定节点：设置活跃节点 → 重渲染结果区"""

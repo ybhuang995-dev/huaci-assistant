@@ -142,6 +142,32 @@ class DeepSeekEngine:
         except Exception as e:
             yield f"❌ 未知错误：{e}"
 
+    def test_connection(self, api_key: str = None, base_url: str = None,
+                        model: str = None) -> bool:
+        """测试 API 连接。成功返回 True，失败抛异常。"""
+        key = api_key or self.api_key
+        url = (base_url or self.base_url).rstrip("/")
+        mdl = model or self.model
+
+        if not key:
+            raise ValueError("API Key 未配置")
+
+        resp = httpx.post(
+            f"{url}/chat/completions",
+            json={
+                "model": mdl,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": 1,
+            },
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+            },
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+        return True
+
 
 # 全局单例
 engine = DeepSeekEngine()

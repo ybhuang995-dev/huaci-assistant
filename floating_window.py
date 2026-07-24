@@ -85,6 +85,7 @@ class FloatingWindow:
         self._on_retry: callable | None = None
         self._on_copy: callable | None = None
         self._on_follow_up: callable | None = None
+        self._on_settings: callable | None = None
 
         # 右键菜单
         self._context_menu: tk.Menu | None = None
@@ -93,6 +94,10 @@ class FloatingWindow:
         self._sidebar_visible = False
         self._sidebar_canvas: tk.Canvas | None = None
         self._collapsed_nodes: set = set()  # 已折叠的节点 ID
+
+        # 追问输入框
+        self._input_entry: tk.Entry | None = None
+        self._input_placeholder = "✏️ 输入追问内容，Enter 发送…"
 
     # ── 辅助方法 ────────────────────────────────────────
 
@@ -148,6 +153,7 @@ class FloatingWindow:
         self._build_tab_bar()
         self._build_original_preview()
         self._build_action_bar()      # BOTTOM 先 pack，抢在 expand 之前占位
+        self._build_input_bar()       # BOTTOM（在操作栏上方）
         self._build_result_area()     # TOP expand 后 pack，吃剩余空间
 
         # 快捷键
@@ -178,6 +184,10 @@ class FloatingWindow:
         """设置追问回调：callback(selected, original, previous, mode)"""
         self._on_follow_up = callback
 
+    def set_on_settings(self, callback: callable) -> None:
+        """设置设置按钮回调：callback()"""
+        self._on_settings = callback
+
     def hide(self, event=None) -> None:
         self._hide_context_menu()
         if self.window:
@@ -195,6 +205,7 @@ class FloatingWindow:
             self._sidebar_visible = False
             self._collapsed_nodes = set()
             self._active_node_id = None
+            self._input_entry = None
 
     # ── 标签栏 ──────────────────────────────────────────
 
@@ -221,12 +232,20 @@ class FloatingWindow:
             tab.bind("<Leave>", lambda e, t=tab, m=mode_key: self._restyle_tab(t, m))
             self._tab_widgets[mode_key] = tab
 
+        # 齿轮按钮（设置）
+        gear = tk.Label(bar, text="⚙", bg=C["surface"], fg=C["subtext"],
+                        font=(FONT, 12), padx=4, pady=2, cursor="hand2")
+        gear.pack(side=tk.RIGHT, padx=(0, 2), pady=2)
+        gear.bind("<Button-1>", lambda e: self._on_settings and self._on_settings())
+        gear.bind("<Enter>", lambda e: gear.configure(fg=C["text"]))
+        gear.bind("<Leave>", lambda e: gear.configure(fg=C["subtext"]))
+
         # 关闭按钮
         close = tk.Button(bar, text="✕", bg=C["surface"], fg=C["subtext"],
                           font=(FONT, 12), bd=0, cursor="hand2",
                           activebackground=C["hover"], activeforeground="#ffffff",
                           command=self.hide)
-        close.pack(side=tk.RIGHT, padx=6, pady=2)
+        close.pack(side=tk.RIGHT, padx=(2, 6), pady=2)
 
         # 高亮当前模式
         self._highlight_active_tab()
@@ -662,6 +681,87 @@ class FloatingWindow:
             return  # 已经是活跃节点
         self._active_node_id = node_id
         self._render_tree()  # 内部会刷新 sidebar
+
+    # ── 追问输入栏 ──────────────────────────────────────
+
+    def _build_input_bar(self) -> None:
+        """构建底部输入栏：文本输入 + 发送按钮"""
+        bar = tk.Frame(self._inner, bg=C["bg"], height=38)
+        bar.pack(fill=tk.X, side=tk.BOTTOM)
+        bar.pack_propagate(False)
+
+        # 顶部分隔线
+        tk.Frame(bar, bg=C["border"], height=1).pack(fill=tk.X, side=tk.TOP)
+
+        inner = tk.Frame(bar, bg=C["bg"])
+        inner.pack(fill=tk.BOTH, expand=True, padx=8, pady=(5, 3))
+
+        # 输入框（用 Frame 包一层模拟边框颜色）
+        entry_frame = tk.Frame(inner, bg=C["border"])
+        entry_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
+
+        self._input_entry = tk.Entry(
+            entry_frame, bg=C["bg"], fg=C["subtext"],
+            font=(FONT, 10), relief="flat", bd=0,
+            insertbackground=C["text"],
+            highlightthickness=0,
+        )
+        self._input_entry.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+        self._input_entry.bind("<Return>", lambda e: self._send_input())
+
+        # 占位符
+        self._reset_input_placeholder()
+        self._input_entry.bind("<FocusIn>", self._on_input_focus_in)
+        self._input_entry.bind("<FocusOut>", self._on_input_focus_out)
+
+        # 发送按钮
+        send_btn = tk.Label(
+            inner, text="发送", bg=C["accent"], fg="#ffffff",
+            font=(FONT, 9, "bold"), padx=14, pady=5, cursor="hand2",
+        )
+        send_btn.pack(side=tk.RIGHT)
+        send_btn.bind("<Button-1>", lambda e: self._send_input())
+        send_btn.bind("<Enter>", lambda e: send_btn.configure(bg="#2563eb"))
+        send_btn.bind("<Leave>", lambda e: send_btn.configure(bg=C["accent"]))
+
+    def _reset_input_placeholder(self) -> None:
+        """重置输入框为占位符状态"""
+        if self._input_entry is None:
+            return
+        self._input_entry.delete(0, tk.END)
+        self._input_entry.insert(0, self._input_placeholder)
+        self._input_entry.configure(fg=C["subtext"])
+
+    def _on_input_focus_in(self, event=None) -> None:
+        """输入框获得焦点：清除占位符"""
+        if self._input_entry is None:
+            return
+        if self._input_entry.get() == self._input_placeholder:
+            self._input_entry.delete(0, tk.END)
+            self._input_entry.configure(fg=C["text"])
+
+    def _on_input_focus_out(self, event=None) -> None:
+        """输入框失去焦点：恢复占位符"""
+        if self._input_entry is None:
+            return
+        if not self._input_entry.get().strip():
+            self._reset_input_placeholder()
+
+    def _send_input(self) -> None:
+        """发送用户输入的追问内容"""
+        if self._input_entry is None:
+            return
+        text = self._input_entry.get().strip()
+        if not text or text == self._input_placeholder:
+            return
+
+        # 清空输入框，保持聚焦以便继续输入（不设占位符，焦点离开时自动恢复）
+        self._input_entry.delete(0, tk.END)
+        self._input_entry.configure(fg=C["text"])
+        self._input_entry.focus_set()
+
+        # 复用追问逻辑
+        self._do_follow_up(text)
 
     # ── 追问（右键菜单） ──────────────────────────────
 

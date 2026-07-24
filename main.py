@@ -26,6 +26,7 @@ from config import Config, DEFAULT_MODE, is_single_english_word
 from clipboard_monitor import ClipboardMonitor, _log
 from engine import engine
 from floating_window import FloatingWindow
+from settings_window import SettingsWindow
 
 # ── 清空日志 ──────────────────────────────────────────────
 import os as _os
@@ -54,6 +55,7 @@ _query_lock = threading.Lock()
 
 _tray_icon = None
 _monitor_ref = None  # 由 main() 设置
+_settings_window = None  # 由 main() 设置
 
 
 def _create_tray_icon() -> Image.Image:
@@ -75,6 +77,7 @@ def _build_tray_menu():
             "🔊 恢复监听" if is_paused else "🔇 暂停监听",
             _on_toggle_pause,
         ),
+        pystray.MenuItem("⚙️ 设置", _on_open_settings),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("退出", _on_tray_exit),
     )
@@ -103,6 +106,37 @@ def _run_tray() -> None:
 def _on_tray_exit(icon, item) -> None:
     _exit_flag.set()
     icon.stop()
+
+
+def _on_open_settings(icon=None, item=None) -> None:
+    """打开设置面板"""
+    if _settings_window is not None:
+        _settings_window.show()
+
+
+def _on_settings_saved(values: dict) -> None:
+    """设置保存后的回调：重新加载引擎配置"""
+    global _monitor_ref
+    _log(f"SETTINGS: saved, reloading config")
+    # 更新全局 Config 对象
+    try:
+        Config.WINDOW_WIDTH = int(values.get("windowWidth", 500))
+        Config.WINDOW_HEIGHT = int(values.get("windowHeight", 400))
+        Config.DEEPSEEK_API_KEY = values.get("apiKey", "")
+        Config.DEEPSEEK_BASE_URL = values.get("baseUrl", "")
+        Config.DEEPSEEK_MODEL = values.get("model", "deepseek-chat")
+        Config.POLL_INTERVAL = float(int(values.get("pollInterval", 400)) / 1000)
+    except Exception as e:
+        _log(f"SETTINGS: error reloading config: {e}")
+
+    # 更新引擎实例
+    engine.api_key = Config.DEEPSEEK_API_KEY
+    engine.base_url = Config.DEEPSEEK_BASE_URL.rstrip("/")
+    engine.model = Config.DEEPSEEK_MODEL
+
+    # 轮询间隔在下一次 poll 循环中自动从 Config 读取，无需显式设置
+
+    _log("SETTINGS: config reloaded")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -261,6 +295,10 @@ def main() -> None:
     # 悬浮窗
     window = FloatingWindow(root)
 
+    # 设置面板
+    global _settings_window
+    _settings_window = SettingsWindow(root, on_save=_on_settings_saved)
+
     # 剪贴板监听
     global _monitor_ref
     monitor = ClipboardMonitor(on_text=_on_clipboard_change)
@@ -271,6 +309,7 @@ def main() -> None:
     window.set_on_retry(_make_retry_handler(window))
     window.set_on_copy(lambda text: monitor.mark_as_seen(text))
     window.set_on_follow_up(_make_follow_up_handler(window))
+    window.set_on_settings(lambda: _settings_window.show())
 
     # 系统托盘
     tray_thread = threading.Thread(target=_run_tray, name="Tray", daemon=True)

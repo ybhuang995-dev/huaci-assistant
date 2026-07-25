@@ -5,21 +5,37 @@
 通过 JS bridge (SettingsApi) 与 Python 后端通信。
 """
 
+import json as _json
 import threading
 import webview
 from pathlib import Path
-from config import Config, MODES, DEFAULT_MODE
+from config import (Config, MODES, DEFAULT_MODE,
+                     MODE_ENABLED, FILTERS_ENABLED,
+                     _FACTORY_MODE_PROMPTS, _FACTORY_MODE_ENABLED,
+                     _FACTORY_FILTERS)
 
 _HTML_PATH = str(Path(__file__).parent / "prototypes" / "settings-panel.html")
 
-# ── JS → Python 字段名映射 ──
+# ── JS → Python 字段名映射（简单字段） ──
 _KEY_MAP = {
     "windowWidth": "WINDOW_WIDTH",
     "windowHeight": "WINDOW_HEIGHT",
+    "defaultMode": "DEFAULT_MODE",
+    "font": "FONT",
+    "autoStart": "AUTO_START",
+    "autoDict": "AUTO_DICT",
+    "provider": "PROVIDER",
     "apiKey": "DEEPSEEK_API_KEY",
     "baseUrl": "DEEPSEEK_BASE_URL",
     "model": "DEEPSEEK_MODEL",
     "pollInterval": "POLL_INTERVAL",
+}
+
+# ── 字典类型字段：JS camelCase → .env UPPER_SNAKE_CASE ──
+_DICT_MAP = {
+    "modeEnabled": "MODE_ENABLED",
+    "modePrompts": "MODE_PROMPTS",
+    "filters": "FILTERS",
 }
 
 # 反向映射
@@ -38,23 +54,17 @@ class SettingsApi:
             "windowWidth": Config.WINDOW_WIDTH,
             "windowHeight": Config.WINDOW_HEIGHT,
             "defaultMode": DEFAULT_MODE,
-            "font": "Microsoft YaHei UI",
-            "autoStart": False,
-            "autoDict": True,
-            "provider": "DeepSeek",
+            "font": Config.FONT,
+            "autoStart": Config.AUTO_START,
+            "autoDict": Config.AUTO_DICT,
+            "provider": Config.PROVIDER,
             "apiKey": Config.DEEPSEEK_API_KEY,
             "baseUrl": Config.DEEPSEEK_BASE_URL,
             "model": Config.DEEPSEEK_MODEL,
             "pollInterval": int(Config.POLL_INTERVAL * 1000),
-            "modeEnabled": {mk: True for mk in MODES},
+            "modeEnabled": dict(MODE_ENABLED),
             "modePrompts": {mk: MODES[mk].get("system_prompt", "") for mk in MODES},
-            "filters": {
-                "too_short": True,
-                "numbers": True,
-                "paths": True,
-                "url": True,
-                "filename": True,
-            },
+            "filters": dict(FILTERS_ENABLED),
         }
 
     def save(self, data: dict) -> None:
@@ -71,17 +81,28 @@ class SettingsApi:
             return {"success": False, "message": str(e)}
 
     def resetAll(self) -> dict:
-        """JS 恢复全部默认，返回默认值 dict 供前端回填"""
-        self._s._reset_all()
-        return self.getConfig()
+        """JS 恢复全部默认，返回出厂预设值供前端回填（保留 API 配置）"""
+        return {
+            "windowWidth": 800,
+            "windowHeight": 600,
+            "defaultMode": "translate",
+            "font": "Microsoft YaHei UI",
+            "autoStart": False,
+            "autoDict": True,
+            # API 配置保留当前值，不随"恢复默认"清除
+            "provider": Config.PROVIDER,
+            "apiKey": Config.DEEPSEEK_API_KEY,
+            "baseUrl": Config.DEEPSEEK_BASE_URL,
+            "model": Config.DEEPSEEK_MODEL,
+            "pollInterval": 400,
+            "modeEnabled": dict(_FACTORY_MODE_ENABLED),
+            "modePrompts": dict(_FACTORY_MODE_PROMPTS),
+            "filters": dict(_FACTORY_FILTERS),
+        }
 
     def resetPrompts(self) -> dict:
-        """JS 恢复 Prompt 默认，返回 {mode_key: default_prompt}"""
-        prompts = {}
-        for mk in MODES:
-            default = MODES[mk].get("system_prompt", "")
-            prompts[mk] = default
-        return prompts
+        """JS 恢复 Prompt 为出厂预设，返回 {mode_key: original_prompt}"""
+        return dict(_FACTORY_MODE_PROMPTS)
 
     def close(self) -> None:
         """JS 关闭窗口"""
@@ -152,16 +173,24 @@ class SettingsWindow:
         """将 JS 传来的数据写入 .env 并回调 main.py"""
         env_path = Path(__file__).parent / ".env"
 
-        # JS camelCase → Python UPPER_CASE
+        # ── 简单字段：JS camelCase → Python UPPER_CASE ──
         values = {}
         for js_key, py_key in _KEY_MAP.items():
             val = data.get(js_key)
             if val is not None:
                 if py_key == "POLL_INTERVAL":
-                    val = str(int(val) / 1000)  # ms → s
+                    val = str(int(val) / 1000)           # ms → s
+                elif isinstance(val, bool):
+                    val = "true" if val else "false"    # bool → str
                 values[py_key] = str(val)
 
-        # 写入 .env
+        # ── 字典字段：JSON 序列化写入 ──
+        for js_key, py_key in _DICT_MAP.items():
+            val = data.get(js_key)
+            if val is not None:
+                values[py_key] = _json.dumps(val, ensure_ascii=False)
+
+        # ── 写入 .env ──
         existing_lines = []
         if env_path.exists():
             existing_lines = env_path.read_text(encoding="utf-8").splitlines()
@@ -189,33 +218,27 @@ class SettingsWindow:
 
         env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
-        # 构建完整回调数据（camelCase key，与 main.py _on_settings_saved 对齐）
+        # ── 构建回调数据，传给 main.py _on_settings_saved ──
+        def _ev(py_key, default=""):
+            return values.get(py_key, default)
+
         callback_values = {
-            "WINDOW_WIDTH": values.get("WINDOW_WIDTH",
-                                       str(Config.WINDOW_WIDTH)),
-            "WINDOW_HEIGHT": values.get("WINDOW_HEIGHT",
-                                        str(Config.WINDOW_HEIGHT)),
-            "DEEPSEEK_API_KEY": values.get("DEEPSEEK_API_KEY",
-                                           Config.DEEPSEEK_API_KEY),
-            "DEEPSEEK_BASE_URL": values.get("DEEPSEEK_BASE_URL",
-                                            Config.DEEPSEEK_BASE_URL),
-            "DEEPSEEK_MODEL": values.get("DEEPSEEK_MODEL",
-                                         Config.DEEPSEEK_MODEL),
-            "POLL_INTERVAL": values.get("POLL_INTERVAL",
-                                        str(Config.POLL_INTERVAL)),
-            # JS 原生 camelCase key — main.py 直接读这些
-            "windowWidth": values.get("WINDOW_WIDTH",
-                                      str(Config.WINDOW_WIDTH)),
-            "windowHeight": values.get("WINDOW_HEIGHT",
-                                       str(Config.WINDOW_HEIGHT)),
-            "apiKey": values.get("DEEPSEEK_API_KEY",
-                                 Config.DEEPSEEK_API_KEY),
-            "baseUrl": values.get("DEEPSEEK_BASE_URL",
-                                  Config.DEEPSEEK_BASE_URL),
-            "model": values.get("DEEPSEEK_MODEL",
-                                Config.DEEPSEEK_MODEL),
-            "pollInterval": str(int(float(values.get("POLL_INTERVAL",
-                                                     str(Config.POLL_INTERVAL))) * 1000)),
+            # 窗口
+            "windowWidth": _ev("WINDOW_WIDTH", str(Config.WINDOW_WIDTH)),
+            "windowHeight": _ev("WINDOW_HEIGHT", str(Config.WINDOW_HEIGHT)),
+            # API
+            "apiKey": _ev("DEEPSEEK_API_KEY", Config.DEEPSEEK_API_KEY),
+            "baseUrl": _ev("DEEPSEEK_BASE_URL", Config.DEEPSEEK_BASE_URL),
+            "model": _ev("DEEPSEEK_MODEL", Config.DEEPSEEK_MODEL),
+            "pollInterval": str(int(float(
+                _ev("POLL_INTERVAL", str(Config.POLL_INTERVAL))) * 1000)),
+            # 通用
+            "defaultMode": _ev("DEFAULT_MODE", DEFAULT_MODE),
+            "font": _ev("FONT", Config.FONT),
+            "autoDict": _ev("AUTO_DICT", str(Config.AUTO_DICT)),
+            "autoStart": _ev("AUTO_START", str(Config.AUTO_START)),
+            "provider": _ev("PROVIDER", Config.PROVIDER),
+            # 字典字段（传原始 dict，main.py 用它们更新 MODES 等）
             "modePrompts": data.get("modePrompts", {}),
             "modeEnabled": data.get("modeEnabled", {}),
             "filters": data.get("filters", {}),

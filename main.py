@@ -22,7 +22,7 @@ import tkinter as tk
 import pystray
 from PIL import Image, ImageDraw
 
-from config import Config, DEFAULT_MODE, is_single_english_word
+from config import Config, DEFAULT_MODE, MODES, MODE_ENABLED, FILTERS_ENABLED, is_single_english_word
 from clipboard_monitor import ClipboardMonitor, _log
 from engine import engine
 from floating_window import FloatingWindow
@@ -54,8 +54,9 @@ _query_lock = threading.Lock()
 # ═══════════════════════════════════════════════════════════
 
 _tray_icon = None
-_monitor_ref = None  # 由 main() 设置
-_settings_window = None  # 由 main() 设置
+_monitor_ref = None      # 由 main() 设置
+_window_ref = None        # 由 main() 设置，供 _on_settings_saved 调 resize
+_settings_window = None   # 由 main() 设置
 
 
 def _create_tray_icon() -> Image.Image:
@@ -126,6 +127,11 @@ def _on_settings_saved(values: dict) -> None:
         Config.DEEPSEEK_BASE_URL = values.get("baseUrl", "")
         Config.DEEPSEEK_MODEL = values.get("model", "deepseek-chat")
         Config.POLL_INTERVAL = float(int(values.get("pollInterval", 400)) / 1000)
+        Config.DEFAULT_MODE = values.get("defaultMode", "translate")
+        Config.FONT = values.get("font", "Microsoft YaHei UI")
+        Config.AUTO_DICT = values.get("autoDict", "true").lower() == "true"
+        Config.AUTO_START = values.get("autoStart", "false").lower() == "true"
+        Config.PROVIDER = values.get("provider", "DeepSeek")
     except Exception as e:
         _log(f"SETTINGS: error reloading config: {e}")
 
@@ -134,7 +140,43 @@ def _on_settings_saved(values: dict) -> None:
     engine.base_url = Config.DEEPSEEK_BASE_URL.rstrip("/")
     engine.model = Config.DEEPSEEK_MODEL
 
-    # 轮询间隔在下一次 poll 循环中自动从 Config 读取，无需显式设置
+    # 更新模式 Prompt（热生效，无需重启）
+    mode_prompts = values.get("modePrompts", {})
+    if mode_prompts:
+        for mk, prompt in mode_prompts.items():
+            if mk in MODES:
+                MODES[mk]["system_prompt"] = prompt
+        _log(f"SETTINGS: updated prompts for {list(mode_prompts.keys())}")
+
+    # 更新模式启用状态
+    mode_enabled = values.get("modeEnabled", {})
+    if mode_enabled:
+        MODE_ENABLED.clear()
+        MODE_ENABLED.update(mode_enabled)
+        _log(f"SETTINGS: mode enabled updated")
+
+    # 更新过滤器开关
+    filters = values.get("filters", {})
+    if filters:
+        FILTERS_ENABLED.clear()
+        FILTERS_ENABLED.update(filters)
+        _log(f"SETTINGS: filters updated")
+
+    # 更新模块级 DEFAULT_MODE
+    import config as _cfg
+    _cfg.DEFAULT_MODE = Config.DEFAULT_MODE
+
+    # 热更新悬浮窗尺寸（如果窗口当前可见）
+    if _window_ref is not None:
+        try:
+            _window_ref.resize(
+                width=Config.WINDOW_WIDTH,
+                height=Config.WINDOW_HEIGHT,
+            )
+            _window_ref.refresh_tabs()
+            _log(f"SETTINGS: window resized to {Config.WINDOW_WIDTH}x{Config.WINDOW_HEIGHT}")
+        except Exception as e:
+            _log(f"SETTINGS: resize failed: {e}")
 
     _log("SETTINGS: config reloaded")
 
@@ -293,7 +335,9 @@ def main() -> None:
     root.title("划词助手")
 
     # 悬浮窗
+    global _window_ref
     window = FloatingWindow(root)
+    _window_ref = window
 
     # 设置面板
     global _settings_window

@@ -12,7 +12,7 @@
 import tkinter as tk
 import markdown
 from tkinterweb import HtmlFrame
-from config import MODES, MODE_TITLES, DEFAULT_MODE
+from config import Config, MODES, MODE_TITLES, DEFAULT_MODE, MODE_ENABLED
 
 FONT = "Microsoft YaHei UI"
 
@@ -134,7 +134,7 @@ class FloatingWindow:
         self.window.overrideredirect(True)
         self.window.attributes("-topmost", True)
 
-        w, h = 500, 400
+        w, h = Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT
         if x is None or y is None:
             x = self.window.winfo_pointerx() - w // 2
             y = self.window.winfo_pointery() + 20
@@ -188,6 +188,40 @@ class FloatingWindow:
         """设置设置按钮回调：callback()"""
         self._on_settings = callback
 
+    def resize(self, width: int = None, height: int = None) -> None:
+        """运行时调整窗口大小"""
+        if not self.window:
+            return
+        w = width if width is not None else self.window.winfo_width()
+        h = height if height is not None else self.window.winfo_height()
+        x = self.window.winfo_x()
+        y = self.window.winfo_y()
+        sw = self.window.winfo_screenwidth()
+        sh = self.window.winfo_screenheight()
+        x = max(0, min(x, sw - w))
+        y = max(0, min(y, sh - h))
+        self.window.geometry(f"{w}x{h}+{x}+{y}")
+
+    def refresh_tabs(self) -> None:
+        """热刷新标签栏（MODE_ENABLED 变更后调用）"""
+        if not self._tab_widgets:
+            return
+        # 全部撤销
+        for tab in self._tab_widgets.values():
+            tab.pack_forget()
+        # 按 MODES 顺序重新 pack 已启用的
+        for mode_key in MODES:
+            tab = self._tab_widgets.get(mode_key)
+            if tab is not None and MODE_ENABLED.get(mode_key, True):
+                tab.pack(side=tk.LEFT, padx=(4, 0), pady=4)
+        # 如果当前模式被禁用，切到第一个可用模式
+        if not MODE_ENABLED.get(self.current_mode, True):
+            for mk in MODES:
+                if MODE_ENABLED.get(mk, True):
+                    self.current_mode = mk
+                    break
+        self._highlight_active_tab()
+
     def hide(self, event=None) -> None:
         self._hide_context_menu()
         if self.window:
@@ -218,6 +252,8 @@ class FloatingWindow:
         self._tab_widgets = {}
 
         for mode_key in MODES:
+            if not MODE_ENABLED.get(mode_key, True):
+                continue
             label_text = MODES[mode_key]["label"]
             tab = tk.Label(
                 bar, text=label_text,

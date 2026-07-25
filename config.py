@@ -4,6 +4,7 @@
 从 .env 加载 API 配置，定义四种模式的 system prompt 和过滤规则。
 """
 
+import json as _json
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -25,8 +26,15 @@ class Config:
     POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "0.4"))  # 轮询间隔（秒）
 
     # ── 窗口 ────────────────────────────────────────────
-    WINDOW_WIDTH = int(os.getenv("WINDOW_WIDTH", "500"))
-    WINDOW_HEIGHT = int(os.getenv("WINDOW_HEIGHT", "380"))
+    WINDOW_WIDTH = int(os.getenv("WINDOW_WIDTH", "800"))
+    WINDOW_HEIGHT = int(os.getenv("WINDOW_HEIGHT", "600"))
+
+    # ── 通用 ────────────────────────────────────────────
+    DEFAULT_MODE = os.getenv("DEFAULT_MODE", "translate")
+    FONT = os.getenv("FONT", "Microsoft YaHei UI")
+    AUTO_DICT = os.getenv("AUTO_DICT", "true").lower() == "true"
+    AUTO_START = os.getenv("AUTO_START", "false").lower() == "true"
+    PROVIDER = os.getenv("PROVIDER", "DeepSeek")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -49,6 +57,8 @@ MODES = {
             "你是一个知识渊博的 AI 助手。根据用户选中的文本提供清晰、准确的回答。\n"
             "- 如果文本是一个问题，直接回答。\n"
             "- 如果文本是一个概念或术语，给出简明解释。\n"
+            "- 如果文本是一段代码，解释代码的功能、逻辑和关键实现细节，"
+            "指出潜在问题或可改进之处。\n"
             "- 如果文本是一段内容，给出分析或总结。\n"
             "请用中文回答。"
         ),
@@ -88,6 +98,49 @@ MODES = {
     },
 }
 
+# ── 保存出厂默认值（供设置面板"恢复默认"使用）─────────
+# 必须在 .env 覆盖之前保存，否则恢复默认拿到的是已修改的值
+_FACTORY_MODE_PROMPTS = {mk: MODES[mk]["system_prompt"] for mk in MODES}
+_FACTORY_MODE_ENABLED = {mk: True for mk in MODES}
+_FACTORY_FILTERS = {
+    "too_short": True, "numbers": True, "paths": True,
+    "url": True, "filename": True,
+}
+
+# ── 从 .env 加载模式 Prompt 覆盖 ─────────────────────
+_MODE_PROMPTS_RAW = os.getenv("MODE_PROMPTS", "")
+if _MODE_PROMPTS_RAW:
+    try:
+        _overrides = _json.loads(_MODE_PROMPTS_RAW)
+        for mk, prompt in _overrides.items():
+            if mk in MODES:
+                MODES[mk]["system_prompt"] = prompt
+    except (_json.JSONDecodeError, TypeError):
+        pass
+
+# ── 从 .env 加载模式启用状态 ─────────────────────────
+_MODE_ENABLED_RAW = os.getenv("MODE_ENABLED", "")
+MODE_ENABLED = {}
+if _MODE_ENABLED_RAW:
+    try:
+        MODE_ENABLED = _json.loads(_MODE_ENABLED_RAW)
+    except (_json.JSONDecodeError, TypeError):
+        pass
+if not MODE_ENABLED:
+    MODE_ENABLED = {mk: True for mk in MODES}
+
+# ── 从 .env 加载过滤器开关 ───────────────────────────
+_FILTERS_RAW = os.getenv("FILTERS", "")
+FILTERS_ENABLED = {
+    "too_short": True, "numbers": True, "paths": True,
+    "url": True, "filename": True,
+}
+if _FILTERS_RAW:
+    try:
+        FILTERS_ENABLED.update(_json.loads(_FILTERS_RAW))
+    except (_json.JSONDecodeError, TypeError):
+        pass
+
 # ── 单词检测 ──────────────────────────────────────────
 
 import re as _re  # noqa: E402
@@ -97,7 +150,7 @@ def is_single_english_word(text: str) -> bool:
     return bool(_re.match(r"^[a-zA-Z]{2,30}$", text.strip()))
 
 # 默认模式
-DEFAULT_MODE = "translate"
+DEFAULT_MODE = os.getenv("DEFAULT_MODE", "translate")
 
 # 各模式的窗口标题
 MODE_TITLES = {

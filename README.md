@@ -2,7 +2,7 @@
 
 > **选中，复制，答案即来。**
 
-在任何应用中选中文字、按 `Ctrl+C`，悬浮窗自动弹出——翻译、解释、润色、总结，AI 已经帮你准备好了。不需要切换窗口，不需要额外快捷键，不打断你的心流。
+在任何应用中选中文字、按 `Ctrl+C`，悬浮窗自动弹出——翻译、解释、润色、总结，AI 已经把答案准备好了。不用切换窗口，不用记快捷键，不打断你的心流。
 
 <p align="center">🚀 <a href="https://github.com/ybhuang995-dev/huaci-assistant/releases"><b>立即下载 EXE</b></a>（Windows 10+，无需 Python）</p>
 

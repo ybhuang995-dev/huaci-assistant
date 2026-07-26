@@ -27,30 +27,34 @@
 
 ## 快速开始
 
-**前提：** Windows 10+ · Python 3.10+ · 一个 API Key
+**前提：** Windows 10+ · 一个 API Key（无需安装 Python）
 
-安装后有两种配置方式：
+### 方式一：下载 EXE（推荐）
 
-### 方式一：设置面板（推荐）
+从 [Releases](https://github.com/ybhuang995-dev/huaci-assistant/releases) 下载 `划词助手.exe`，双击运行。启动后托盘右键 → **设置** → **API 配置**，填写 Key 即用。
 
-启动后托盘右键 → **设置** → **API 配置**，直接填写 Key、选择 Provider、测试连接，保存即生效。
+### 方式二：从源码运行
 
-### 方式二：手动编辑 .env
+需要 Python 3.10+
 
 ```bash
+git clone https://github.com/ybhuang995-dev/huaci-assistant.git
+cd 划词助手
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 配置 API Key（二选一）
+# A. 直接编辑 .env
 cp .env.example .env
-# 用编辑器打开 .env，填入 API Key
-# 免费注册 DeepSeek：https://platform.deepseek.com/api_keys
-```
+# 打开 .env 填入 Key（免费注册：https://platform.deepseek.com/api_keys）
+#
+# B. 启动后在设置面板中配置
 
-### 启动
-
-```bash
 python main.py
-# 或直接双击 run.bat
 ```
 
-启动后任务栏右下角出现托盘图标 🅐，右键可暂停监听、打开设置、退出。也可以直接双击 `run.bat` 一键启动。
+启动后任务栏右下角出现托盘图标 🅐，右键可暂停监听、打开设置、退出。
 
 ## 怎么用
 

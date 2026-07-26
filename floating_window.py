@@ -380,7 +380,7 @@ class FloatingWindow:
         outer.pack(fill=tk.BOTH, expand=True, padx=2, pady=(2, 0))
 
         # ── 侧边栏（默认隐藏） ──
-        self._sidebar_frame = tk.Frame(outer, bg=C["surface"], width=200)
+        self._sidebar_frame = tk.Frame(outer, bg=C["surface"], width=220)
         self._sidebar_frame.pack_propagate(False)
         # 不 pack，由 _toggle_sidebar 控制
 
@@ -816,18 +816,41 @@ class FloatingWindow:
             self._sidebar_canvas.delete("all")
 
             records = _hist.get_recent(limit=100)
+
+            y = 8
+
+            # ── 顶部：清除全部按钮（无论有无记录都显示） ──
+            self._sidebar_canvas.create_rectangle(
+                4, y, 212, y + 28, fill=C["bg"], outline=C["border"],
+                tags=("side_item",),
+            )
+            clear_tag = "hist_clear_all"
+            self._sidebar_canvas.create_text(
+                108, y + 14, text="🗑 清除全部历史", anchor="center",
+                fill=C["hover"], font=(FONT, 9, "bold"),
+                tags=(clear_tag, "side_item"),
+            )
+            self._sidebar_canvas.tag_bind(
+                clear_tag, "<Button-1>",
+                lambda e: self._delete_all_history())
+            self._sidebar_canvas.tag_bind(
+                clear_tag, "<Enter>",
+                lambda e: self._sidebar_canvas.configure(cursor="hand2"))
+            self._sidebar_canvas.tag_bind(
+                clear_tag, "<Leave>",
+                lambda e: self._sidebar_canvas.configure(cursor=""))
+            y += 38
+
             if not records:
                 self._sidebar_canvas.create_text(
-                    100, 40, text="(暂无历史记录)", anchor="center",
+                    108, y + 20, text="(暂无历史记录)", anchor="center",
                     fill=C["subtext"], font=(FONT, 10),
                 )
                 return
 
-            y = 8
             for rec in records:
                 rid = rec["id"]
                 ts = rec["timestamp"]
-                # 显示日期时间
                 try:
                     dt = ts.replace("T", " ")[:16]
                 except Exception:
@@ -849,9 +872,26 @@ class FloatingWindow:
                     tags=("side_item",),
                 )
 
+                # ✕ 删除按钮
+                del_tag = f"del_{rid}"
+                self._sidebar_canvas.create_text(
+                    208, y, text="✕", anchor="ne",
+                    fill=C["subtext"], font=(FONT, 10),
+                    tags=(del_tag, "side_item"),
+                )
+                self._sidebar_canvas.tag_bind(
+                    del_tag, "<Button-1>",
+                    lambda e, rid=rid: self._delete_history(rid))
+                self._sidebar_canvas.tag_bind(
+                    del_tag, "<Enter>",
+                    lambda e: self._sidebar_canvas.configure(cursor="hand2"))
+                self._sidebar_canvas.tag_bind(
+                    del_tag, "<Leave>",
+                    lambda e: self._sidebar_canvas.configure(cursor=""))
+
                 y += 16
 
-                # 原文预览
+                # 原文预览（点击加载）
                 tag = f"hist_{rid}"
                 self._sidebar_canvas.create_text(
                     20, y, text=text_preview, anchor="nw",
@@ -872,7 +912,7 @@ class FloatingWindow:
 
                 # 分隔线
                 self._sidebar_canvas.create_line(
-                    10, y, 190, y, fill=C["border"],
+                    10, y, 210, y, fill=C["border"],
                     tags=("side_item",),
                 )
                 y += 8
@@ -880,7 +920,7 @@ class FloatingWindow:
             bbox = self._sidebar_canvas.bbox("all")
             if bbox:
                 self._sidebar_canvas.configure(
-                    scrollregion=(0, 0, 200, bbox[3] + 8))
+                    scrollregion=(0, 0, 220, bbox[3] + 8))
 
         except tk.TclError:
             pass
@@ -916,6 +956,32 @@ class FloatingWindow:
             self._active_node_id = self._tree_nodes[-1]["id"]
 
         self._render_tree()
+
+    def _delete_history(self, record_id: int) -> None:
+        """删除单条历史记录（弹确认框）"""
+        if not tk.messagebox.askyesno(
+            "确认删除", "确定要删除这条历史记录吗？\n追问子节点也会一起删除。",
+            parent=self.window,
+        ):
+            return
+        import history as _hist
+        _hist.delete_query(record_id)
+        # 如果当前侧边栏在历史模式，刷新列表
+        if self._sidebar_visible and self._sidebar_mode == "history":
+            self._render_history_sidebar()
+
+    def _delete_all_history(self) -> None:
+        """清除全部历史记录（弹确认框）"""
+        if not tk.messagebox.askyesno(
+            "确认清除", "确定要清除全部历史记录吗？\n此操作不可撤销。",
+            parent=self.window,
+        ):
+            return
+        import history as _hist
+        _hist.delete_all()
+        # 如果当前侧边栏在历史模式，刷新列表
+        if self._sidebar_visible and self._sidebar_mode == "history":
+            self._render_history_sidebar()
 
     def refresh_history_btn(self) -> None:
         """根据 Config.SAVE_HISTORY 显示/隐藏历史按钮"""

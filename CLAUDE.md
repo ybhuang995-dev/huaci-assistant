@@ -104,9 +104,10 @@ Windows 桌面工具：在任意应用中选中文字，Ctrl+C 复制，自动�
 ├── floating_window.py       # 悬浮窗 UI（tkinter Toplevel + HtmlFrame）
 ├── settings_window.py       # 设置面板（pywebview WebView2 + SettingsApi bridge）
 ├── clipboard_monitor.py     # 剪贴板监听（Windows API + 8 条正则过滤）
-├── engine.py                # DeepSeek API 调用（httpx SSE 流式 + follow_up）
+├── engine.py                # LLM 引擎（httpx SSE 流式 + follow_up + classify）
 ├── config.py                # 配置类 + 模式定义 + 过滤规则 + 出厂预设
 ├── autostart.py             # 开机自启（注册表 HKCU\...\Run）
+├── history.py               # SQLite 历史记录（自动保存 + 浏览 + 回放）
 ├── prototypes/
 │   └── settings-panel.html  # 设置面板 HTML/CSS/JS 原型（890+ 行）
 ├── requirements.txt
@@ -267,9 +268,9 @@ node = {
 - 结果区 Markdown → HtmlFrame 渲染
 - 设置面板 CustomTkinter → pywebview WebView2（14 字段全覆盖 + JS Bridge + 热更新 + 出厂预设 + 测试连接）
 - 多模型切换（`PROVIDER` 联动 `base_url` + `model` 自动填充）
+- SQLite 历史记录 — 自动保存、侧边栏浏览、追问链回放、单条/全部删除
 
 ### 📋 Phase 3
-- SQLite 历史记录
 - PyInstaller 打包单 exe（开机自启 `AUTO_START` 已实现 ✅）
 - 自定义 Prompt（设置面板已支持编辑，热生效 ✅）
 

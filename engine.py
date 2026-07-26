@@ -8,7 +8,7 @@ LLM 引擎模块
 
 import json
 import httpx
-from config import Config, MODES, CLASSIFIER_PROMPT, DEFAULT_MODE
+from config import Config, MODES, build_classifier_prompt, DEFAULT_MODE, MODE_ENABLED
 
 
 class DeepSeekEngine:
@@ -187,7 +187,7 @@ class DeepSeekEngine:
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": CLASSIFIER_PROMPT},
+                {"role": "system", "content": build_classifier_prompt()},
                 {"role": "user", "content": text},
             ],
             "max_tokens": 200,   # 推理模型需要 extra token 给 reasoning

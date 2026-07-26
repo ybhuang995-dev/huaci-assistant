@@ -106,26 +106,74 @@ MODES = {
 
 # ── 自动路由分类器 Prompt ─────────────────────────────
 
-CLASSIFIER_PROMPT = (
-    "你是一个文本分类器。分析用户文本，只返回 {\"mode\": \"<key>\"}。\n\n"
-    "可用模式：\n"
-    "- translate: 非中文的外语文本（英文/日文/韩文等），需要翻译成中文\n"
-    "- ask: 中文问题、概念、术语、代码，需要解释或回答\n"
-    "- polish: 中文文本的语法和表达优化\n"
-    "- summarize: 长文本（>200字）的要点提炼\n"
-    "- dict: 单个英文单词的词典释义（发音+词性+例句）\n\n"
-    "判断规则（按顺序，命中即停）：\n"
-    "1. 单个英文单词（如 hello、algorithm、serendipity）→ dict\n"
-    "2. 非中文文本（英文句子/段落/日文/韩文）→ translate\n"
-    "3. 中文文本 → 按以下子规则：\n"
-    "   a. 包含疑问（什么/怎么/为什么/如何/能不能/解释/这段代码）→ ask\n"
-    "   b. 超过 200 字的长篇信息 → summarize\n"
-    "   c. 有明显语法错误、不通顺、需要改写 → polish\n"
-    "   d. 以上都不符合 → ask\n"
-    "4. 代码片段（任何编程语言）→ ask\n\n"
-    "⚠️ 中文文本永远不要选 translate。translate 只用于外语翻译成中文。\n"
-    "只返回 JSON，不要任何其他文字。"
-)
+# ── 各模式在分类器 prompt 中的描述 ─────────────────────
+
+_MODE_CLASSIFIER_DESC = {
+    "translate": "- translate: 非中文的外语文本（英文/日文/韩文等），需要翻译成中文",
+    "ask":       "- ask: 中文问题、概念、术语、代码，需要解释或回答",
+    "polish":    "- polish: 中文文本的语法和表达优化",
+    "summarize": "- summarize: 长文本（>200字）的要点提炼",
+    "dict":      "- dict: 单个英文单词的词典释义（发音+词性+例句）",
+}
+
+
+def build_classifier_prompt() -> str:
+    """动态生成分类器 prompt，只列出 MODE_ENABLED 中启用的模式。
+
+    这样用户取消勾选的模式不会出现在 LLM 的可选项中，
+    避免 LLM 选中一个已被禁用的模式再被 fallback 截掉。
+    """
+    enabled = {mk for mk in MODES if MODE_ENABLED.get(mk, True)}
+
+    lines: list[str] = []
+    lines.append("你是一个文本分类器。分析用户文本，只返回 {\"mode\": \"<key>\"}。\n")
+    lines.append("可用模式：")
+    for mk in MODES:
+        if mk in enabled and mk in _MODE_CLASSIFIER_DESC:
+            lines.append(_MODE_CLASSIFIER_DESC[mk])
+
+    lines.append("")
+    lines.append("判断规则（按顺序，命中即停）：")
+
+    idx = 1  # 顶级规则编号
+
+    # 1. 单词 → dict
+    if "dict" in enabled:
+        lines.append(f"{idx}. 单个英文单词（如 hello、algorithm、serendipity）→ dict")
+        idx += 1
+
+    # 2. 非中文 → translate
+    if "translate" in enabled:
+        lines.append(f"{idx}. 非中文文本（英文句子/段落/日文/韩文）→ translate")
+        idx += 1
+
+    # 3. 中文文本子规则（只包含已启用模式）
+    cn_mode_order = ["ask", "summarize", "polish"]
+    cn_enabled = [m for m in cn_mode_order if m in enabled]
+    if cn_enabled:
+        lines.append(f"{idx}. 中文文本 → 按以下子规则：")
+        idx += 1
+        sub_letter = ord('a')
+        for m in cn_enabled:
+            desc = _MODE_CLASSIFIER_DESC[m].split(": ", 1)[1] if ": " in _MODE_CLASSIFIER_DESC[m] else _MODE_CLASSIFIER_DESC[m]
+            lines.append(f"   {chr(sub_letter)}. {desc} → {m}")
+            sub_letter += 1
+        # 兜底：以上都不符合 → 第一个启用的中文模式
+        fallback_cn = cn_enabled[0]
+        lines.append(f"   {chr(sub_letter)}. 以上都不符合 → {fallback_cn}")
+
+    # 4. 代码片段 → ask
+    if "ask" in enabled:
+        lines.append(f"{idx}. 代码片段（任何编程语言）→ ask")
+        idx += 1
+
+    # 翻译警告（仅当 translate 启用时才有意义）
+    if "translate" in enabled:
+        lines.append("")
+        lines.append("⚠️ 中文文本永远不要选 translate。translate 只用于外语翻译成中文。")
+
+    lines.append("只返回 JSON，不要任何其他文字。")
+    return "\n".join(lines)
 
 _FACTORY_MODE_PROMPTS = {mk: MODES[mk]["system_prompt"] for mk in MODES}
 _FACTORY_MODE_ENABLED = {mk: True for mk in MODES}

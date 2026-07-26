@@ -116,8 +116,7 @@ python main.py
 ├── image/                   # README 截图
 ├── requirements.txt
 ├── run.bat                  # Windows 一键启动
-├── .env.example             # 配置模板（提交 Git）
-└── .env                     # 你的本地配置（不提交 Git）
+└── .env.example             # 配置模板
 ```
 
 ## 开源协议

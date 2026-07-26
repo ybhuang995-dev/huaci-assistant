@@ -14,7 +14,7 @@ import markdown
 from tkinterweb import HtmlFrame
 from config import Config, MODES, MODE_TITLES, DEFAULT_MODE, MODE_ENABLED
 
-FONT = "Microsoft YaHei UI"
+FONT = Config.FONT
 
 # 白色主题
 C = {

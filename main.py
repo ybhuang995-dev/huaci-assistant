@@ -28,6 +28,7 @@ from clipboard_monitor import ClipboardMonitor, _log
 from engine import engine
 from floating_window import FloatingWindow
 from settings_window import SettingsWindow
+from autostart import set_enabled as _autostart_set_enabled
 
 # ── 清空日志 ──────────────────────────────────────────────
 import os as _os
@@ -235,6 +236,11 @@ def _on_settings_saved(values: dict) -> None:
         Config.AUTO_ROUTE = values.get("autoRoute", "false").lower() == "true"
         Config.HOTKEY_PAUSE = values.get("hotkeyPause", "ctrl+shift+p")
         Config.PROVIDER = values.get("provider", "DeepSeek")
+        # 开机自启：立即生效
+        try:
+            _autostart_set_enabled(Config.AUTO_START)
+        except Exception as e:
+            _log(f"SETTINGS: autostart error: {e}")
     except Exception as e:
         _log(f"SETTINGS: error reloading config: {e}")
 
@@ -542,6 +548,12 @@ def main() -> None:
     print("   复制任意文字（Ctrl+C）即可触发翻译", flush=True)
     print(f"   {hotkey_display} 暂停/恢复监听", flush=True)
     print("   右键托盘图标可退出", flush=True)
+
+    # 启动时同步一次注册表（修复手动修改 .env 后的差异）
+    try:
+        _autostart_set_enabled(Config.AUTO_START)
+    except Exception as e:
+        _log(f"MAIN: autostart sync error: {e}")
 
     # 主循环定期检查
     _schedule_main_loop(root, window, monitor)

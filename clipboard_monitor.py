@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from config import FILTER_RULES, Config
+from config import FILTER_RULES, Config, FILTERS_ENABLED
 
 # ── 调试日志 ────────────────────────────────────────────
 _LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.log")
@@ -74,9 +74,9 @@ def should_trigger(text: str) -> bool:
     if not t:
         return False
 
-    for pattern, rule_name in FILTER_RULES:
-        if pattern.match(t):
-            _log(f"FILTER: skipped [{rule_name}]: {t[:60]}")
+    for pattern, rule_key in FILTER_RULES:
+        if FILTERS_ENABLED.get(rule_key, True) and pattern.match(t):
+            _log(f"FILTER: skipped [{rule_key}]: {t[:60]}")
             return False
 
     return True

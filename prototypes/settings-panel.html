@@ -507,10 +507,10 @@
 
       <div class="form-group">
         <label>API Provider</label>
-        <select data-key="provider">
-          <option selected>DeepSeek</option>
-          <option>OpenAI</option>
-          <option>自定义 (OpenAI 兼容)</option>
+        <select data-key="provider" id="select-provider">
+          <option value="DeepSeek" data-base-url="https://api.deepseek.com/v1" data-model="deepseek-chat">DeepSeek</option>
+          <option value="OpenAI" data-base-url="https://api.openai.com/v1" data-model="gpt-4o">OpenAI</option>
+          <option value="custom" data-base-url="" data-model="">自定义 (OpenAI 兼容)</option>
         </select>
       </div>
 
@@ -715,6 +715,21 @@ document.getElementById('btn-eye').addEventListener('click', function() {
 // ── 范围滑块当前值实时更新 ──
 document.getElementById('poll-slider').addEventListener('input', function() {
   document.getElementById('poll-val').textContent = '当前: ' + this.value + 'ms';
+});
+
+// ── Provider 切换联动：自动填充 base_url + model ──
+document.getElementById('select-provider').addEventListener('change', function() {
+  var opt = this.options[this.selectedIndex];
+  var baseUrlInput = document.querySelector('[data-key="baseUrl"]');
+  var modelInput = document.querySelector('[data-key="model"]');
+  if (this.value === 'custom') {
+    // 自定义模式：清空字段让用户自行填写
+    if (baseUrlInput) baseUrlInput.value = '';
+    if (modelInput) modelInput.value = '';
+  } else {
+    if (baseUrlInput && opt.dataset.baseUrl) baseUrlInput.value = opt.dataset.baseUrl;
+    if (modelInput && opt.dataset.model) modelInput.value = opt.dataset.model;
+  }
 });
 
 // ── Toast ──

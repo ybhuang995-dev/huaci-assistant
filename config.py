@@ -194,19 +194,19 @@ import re  # noqa: E402
 
 FILTER_RULES = [
     # 过短（< 2 个有效字符）
-    (re.compile(r"^.{0,1}$"), "too short"),
+    (re.compile(r"^.{0,1}$"), "too_short"),
     # 纯数字 + 常见符号
-    (re.compile(r"^[\d\s.,+\-*/=%%$€£¥()[\]{}<>|&^~#@!;:'""`]+$"), "numbers/symbols only"),
+    (re.compile(r"^[\d\s.,+\-*/=%%$€£¥()[\]{}<>|&^~#@!;:'""`]+$"), "numbers"),
     # Windows 路径（C:\...  D:/...  \\server\...）
-    (re.compile(r"^[A-Za-z]:[\\/]"), "Windows path"),
+    (re.compile(r"^[A-Za-z]:[\\/]"), "paths"),
     # UNC 路径
-    (re.compile(r"^\\\\"), "UNC path"),
+    (re.compile(r"^\\\\"), "paths"),
     # Unix 绝对路径
-    (re.compile(r"^/"), "Unix path"),
+    (re.compile(r"^/"), "paths"),
     # 纯 URL
-    (re.compile(r"^https?://\S+$"), "URL"),
+    (re.compile(r"^https?://\S+$"), "url"),
     # 单文件名（含扩展名）
     (re.compile(r"^[\w\-. ]+\.[a-zA-Z]{2,6}$"), "filename"),
     # 纯数字
-    (re.compile(r"^\d+$"), "pure digits"),
+    (re.compile(r"^\d+$"), "numbers"),
 ]

@@ -460,14 +460,22 @@ def _classify_and_dispatch(root: tk.Tk, window: FloatingWindow,
         if window.window is None:
             _log("ROUTE: window closed before dispatch")
             return
+
+        # 如果分类结果对应的模式已被禁用，fallback 到 initial_mode
+        if not MODE_ENABLED.get(classified_mode, True):
+            _log(f"ROUTE: mode [{classified_mode}] disabled, fallback to [{initial_mode}]")
+            mode_key = initial_mode
+        else:
+            mode_key = classified_mode
+
         try:
-            mode_label = MODES[classified_mode]["label"]
+            mode_label = MODES[mode_key]["label"]
         except KeyError:
-            mode_label = classified_mode
+            mode_label = mode_key
         try:
             window.set_route_hint(f"🤖 自动识别为：{mode_label}")
-            window.apply_classified_mode(classified_mode)
-            _work_queue.put((text, classified_mode, qid, None))
+            window.apply_classified_mode(mode_key)
+            _work_queue.put((text, mode_key, qid, None))
             _log(f"ROUTE: dispatched [{mode_label}] qid={qid}")
         except Exception as e:
             _log(f"ROUTE: dispatch error: {e}")

@@ -119,4 +119,4 @@ Works with any OpenAI-compatible API:
 
 MIT
 
-> [中文](README.md)
+> 中文: [README.md](README.md)

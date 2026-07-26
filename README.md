@@ -118,3 +118,5 @@ python main.py
 ## 开源协议
 
 MIT
+
+> [English version](README_EN.md)

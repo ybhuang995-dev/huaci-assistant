@@ -118,3 +118,5 @@ Works with any OpenAI-compatible API:
 ## License
 
 MIT
+
+> [中文版](README.md)

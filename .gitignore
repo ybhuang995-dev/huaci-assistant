@@ -26,4 +26,5 @@ build/
 history.db
 
 # Claude Code
+.claude/
 .claude/worktrees/

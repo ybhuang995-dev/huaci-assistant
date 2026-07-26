@@ -35,6 +35,7 @@ class Config:
     AUTO_DICT = os.getenv("AUTO_DICT", "true").lower() == "true"
     AUTO_START = os.getenv("AUTO_START", "false").lower() == "true"
     AUTO_ROUTE = os.getenv("AUTO_ROUTE", "false").lower() == "true"
+    HOTKEY_PAUSE = os.getenv("HOTKEY_PAUSE", "ctrl+shift+p")
     PROVIDER = os.getenv("PROVIDER", "DeepSeek")
 
 

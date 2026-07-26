@@ -21,6 +21,7 @@ import threading
 import tkinter as tk
 import pystray
 from PIL import Image, ImageDraw
+from pynput import keyboard as pynput_keyboard
 
 from config import Config, DEFAULT_MODE, MODES, MODE_ENABLED, FILTERS_ENABLED, is_single_english_word
 from clipboard_monitor import ClipboardMonitor, _log
@@ -48,10 +49,102 @@ _work_queue: queue.Queue = queue.Queue()
 _query_counter = 0
 _query_lock = threading.Lock()
 
+# ── 全局热键 ──────────────────────────────────────────────
+_hotkey_listener: pynput_keyboard.GlobalHotKeys | None = None
 
-# ═══════════════════════════════════════════════════════════
-# 系统托盘
-# ═══════════════════════════════════════════════════════════
+
+def _parse_hotkey(hotkey_str: str) -> str:
+    """将用户可读的热键字符串转为 pynput 格式。
+
+    "ctrl+shift+p"  →  "<ctrl>+<shift>+p"
+    "Ctrl+Shift+P"  →  "<ctrl>+<shift>+p"
+    "alt+f1"        →  "<alt>+<f1>"
+    "ctrl+space"    →  "<ctrl>+<space>"
+    """
+    _SPECIAL = {
+        "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10",
+        "f11", "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19",
+        "f20", "f21", "f22", "f23", "f24",
+        "up", "down", "left", "right",
+        "home", "end", "page_up", "page_down", "pageup", "pagedown",
+        "enter", "space", "tab", "esc", "escape",
+        "backspace", "delete", "insert",
+        "caps_lock", "num_lock", "scroll_lock",
+        "print_screen", "pause", "menu",
+    }
+    parts = [p.strip() for p in hotkey_str.split("+")]
+    out = []
+    for p in parts:
+        low = p.lower()
+        if low in ("ctrl", "control"):
+            out.append("<ctrl>")
+        elif low == "shift":
+            out.append("<shift>")
+        elif low == "alt":
+            out.append("<alt>")
+        elif low in ("cmd", "win", "windows", "super"):
+            out.append("<cmd>")
+        elif low in _SPECIAL:
+            out.append(f"<{low}>")
+        else:
+            out.append(low)
+    return "+".join(out)
+
+
+def _start_hotkey_listener() -> None:
+    """启动全局热键监听（在 daemon 线程中运行）"""
+    global _hotkey_listener
+    _stop_hotkey_listener()
+
+    hotkey_str = Config.HOTKEY_PAUSE.strip()
+    if not hotkey_str:
+        _log("HOTKEY: empty config, skip")
+        return
+
+    try:
+        combo = _parse_hotkey(hotkey_str)
+    except Exception as e:
+        _log(f"HOTKEY: parse error: {e}")
+        return
+
+    def _on_toggle():
+        """热键回调 — 切换暂停/恢复（运行在 pynput 线程）"""
+        if _monitor_ref is None:
+            return
+        if _monitor_ref.is_paused():
+            _monitor_ref.resume()
+            _log("HOTKEY: resumed")
+        else:
+            _monitor_ref.pause()
+            _log("HOTKEY: paused")
+        # 更新托盘菜单文本
+        try:
+            if _tray_icon is not None:
+                _tray_icon.menu = _build_tray_menu()
+                _tray_icon.update_menu()
+        except Exception:
+            pass
+
+    try:
+        _hotkey_listener = pynput_keyboard.GlobalHotKeys({combo: _on_toggle})
+        _hotkey_listener.start()
+        _log(f"HOTKEY: registered [{hotkey_str}] → [{combo}]")
+    except Exception as e:
+        _log(f"HOTKEY: register error: {e}")
+
+
+def _stop_hotkey_listener() -> None:
+    """停止全局热键监听"""
+    global _hotkey_listener
+    if _hotkey_listener is not None:
+        try:
+            _hotkey_listener.stop()
+        except Exception:
+            pass
+        _hotkey_listener = None
+
+
+# ── 托盘图标 + 菜单 ──────────────────────────────────────
 
 _tray_icon = None
 _monitor_ref = None      # 由 main() 设置
@@ -71,10 +164,17 @@ def _create_tray_icon() -> Image.Image:
 def _build_tray_menu():
     """根据暂停状态动态构建托盘菜单"""
     is_paused = _monitor_ref.is_paused() if _monitor_ref else False
+    hotkey_hint = Config.HOTKEY_PAUSE.strip()
+    if hotkey_hint:
+        hotkey_hint = hotkey_hint.replace("+", " + ").title()
     return pystray.Menu(
         pystray.MenuItem("划词助手 — 复制即翻译", lambda: None, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(
+            f"🔊 恢复监听  ({hotkey_hint})" if is_paused
+            else f"🔇 暂停监听  ({hotkey_hint})",
+            _on_toggle_pause,
+        ) if hotkey_hint else pystray.MenuItem(
             "🔊 恢复监听" if is_paused else "🔇 暂停监听",
             _on_toggle_pause,
         ),
@@ -92,7 +192,8 @@ def _on_toggle_pause(icon, item=None) -> None:
         _monitor_ref.resume()
     else:
         _monitor_ref.pause()
-    icon.update_menu(_build_tray_menu())
+    icon.menu = _build_tray_menu()
+    icon.update_menu()
 
 
 def _run_tray() -> None:
@@ -132,6 +233,7 @@ def _on_settings_saved(values: dict) -> None:
         Config.AUTO_DICT = values.get("autoDict", "true").lower() == "true"
         Config.AUTO_START = values.get("autoStart", "false").lower() == "true"
         Config.AUTO_ROUTE = values.get("autoRoute", "false").lower() == "true"
+        Config.HOTKEY_PAUSE = values.get("hotkeyPause", "ctrl+shift+p")
         Config.PROVIDER = values.get("provider", "DeepSeek")
     except Exception as e:
         _log(f"SETTINGS: error reloading config: {e}")
@@ -178,6 +280,17 @@ def _on_settings_saved(values: dict) -> None:
             _log(f"SETTINGS: window resized to {Config.WINDOW_WIDTH}x{Config.WINDOW_HEIGHT}")
         except Exception as e:
             _log(f"SETTINGS: resize failed: {e}")
+
+    # 热更新全局快捷键
+    _start_hotkey_listener()
+
+    # 更新托盘菜单（快捷键提示可能变化）
+    try:
+        if _tray_icon is not None:
+            _tray_icon.menu = _build_tray_menu()
+            _tray_icon.update_menu()
+    except Exception:
+        pass
 
     _log("SETTINGS: config reloaded")
 
@@ -353,6 +466,7 @@ def _schedule_main_loop(root: tk.Tk, window: FloatingWindow,
 
     def _tick():
         if _exit_flag.is_set():
+            _stop_hotkey_listener()
             monitor.stop()
             root.destroy()
             return
@@ -420,8 +534,13 @@ def main() -> None:
     # 启动剪贴板监听
     monitor.start()
 
+    # 启动全局热键
+    _start_hotkey_listener()
+
+    hotkey_display = Config.HOTKEY_PAUSE.replace("+", " + ").title()
     print("[OK] 划词助手已启动（剪贴板监听模式）", flush=True)
     print("   复制任意文字（Ctrl+C）即可触发翻译", flush=True)
+    print(f"   {hotkey_display} 暂停/恢复监听", flush=True)
     print("   右键托盘图标可退出", flush=True)
 
     # 主循环定期检查
@@ -433,6 +552,7 @@ def main() -> None:
         pass
     finally:
         _exit_flag.set()
+        _stop_hotkey_listener()
         monitor.stop()
         print("[BYE] 划词助手已退出", flush=True)
 

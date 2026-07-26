@@ -262,6 +262,32 @@
     transform: translateX(18px);
   }
 
+  .shortcut-input {
+    width: 140px;
+    padding: 5px 10px;
+    font-size: 11px;
+    font-family: "Consolas", "Cascadia Code", "Courier New", monospace;
+    text-align: center;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    outline: none;
+    flex-shrink: 0;
+    letter-spacing: 0.5px;
+  }
+  .shortcut-input:focus,
+  .shortcut-input[data-recording="true"] {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(59,130,246,0.1);
+    background: #fff;
+  }
+  .shortcut-input[data-recording="true"] {
+    border-style: dashed;
+    caret-color: transparent;
+    cursor: pointer;
+  }
+
   .mode-badge {
     display: inline-block;
     width: 8px; height: 8px;
@@ -462,6 +488,15 @@
           <input type="checkbox" data-key="autoRoute">
           <span class="slider"></span>
         </label>
+      </div>
+
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">🔇 暂停/恢复快捷键</div>
+          <div class="toggle-hint">修改后保存即生效，支持 ctrl / shift / alt / win + 字母或功能键</div>
+        </div>
+        <input type="text" data-key="hotkeyPause" value="ctrl+shift+p"
+               class="shortcut-input" placeholder="ctrl+shift+p">
       </div>
     </div>
 
@@ -689,6 +724,82 @@ function showToast(text, type) {
   toast.className = 'toast ' + type + ' show';
   setTimeout(function() { toast.classList.remove('show'); }, 2000);
 }
+
+// ── 快捷键录制 ──
+(function() {
+  var hotkeyInput = document.querySelector('[data-key="hotkeyPause"]');
+  if (!hotkeyInput) return;
+
+  // event.key → pynput 键名映射
+  var KEY_MAP = {
+    'ArrowUp': 'up', 'ArrowDown': 'down', 'ArrowLeft': 'left', 'ArrowRight': 'right',
+    'PageUp': 'page_up', 'PageDown': 'page_down',
+    'Home': 'home', 'End': 'end',
+    'Escape': 'esc', ' ': 'space',
+    'Enter': 'enter', 'Tab': 'tab',
+    'Backspace': 'backspace', 'Delete': 'delete', 'Insert': 'insert',
+    'CapsLock': 'caps_lock', 'NumLock': 'num_lock', 'ScrollLock': 'scroll_lock',
+    'PrintScreen': 'print_screen', 'Pause': 'pause', 'ContextMenu': 'menu',
+  };
+
+  var originalValue = hotkeyInput.value;
+
+  hotkeyInput.addEventListener('focus', function() {
+    originalValue = this.value;
+    this.value = '';
+    this.placeholder = '按下快捷键…';
+    this.dataset.recording = 'true';
+  });
+
+  hotkeyInput.addEventListener('blur', function() {
+    if (this.dataset.recording === 'true') {
+      this.value = originalValue;
+      this.placeholder = 'ctrl+shift+p';
+      delete this.dataset.recording;
+    }
+  });
+
+  hotkeyInput.addEventListener('keydown', function(e) {
+    if (this.dataset.recording !== 'true') return;
+
+    var key = e.key;
+
+    // 忽略纯修饰键
+    if (key === 'Control' || key === 'Shift' || key === 'Alt' || key === 'Meta') {
+      return;
+    }
+
+    // Escape 取消录制
+    if (key === 'Escape') {
+      this.value = originalValue;
+      this.placeholder = 'ctrl+shift+p';
+      delete this.dataset.recording;
+      this.blur();
+      return;
+    }
+
+    e.preventDefault();
+
+    // 构建组合键字符串
+    var parts = [];
+    if (e.ctrlKey) parts.push('ctrl');
+    if (e.shiftKey) parts.push('shift');
+    if (e.altKey) parts.push('alt');
+    if (e.metaKey) parts.push('win');
+
+    // 主键映射
+    var mainKey = KEY_MAP[key] || key;
+    // F1-F24 → f1-f24
+    if (/^F\d+$/.test(mainKey)) mainKey = mainKey.toLowerCase();
+    parts.push(mainKey.toLowerCase());
+
+    var combo = parts.join('+');
+    this.value = combo;
+    this.placeholder = 'ctrl+shift+p';
+    delete this.dataset.recording;
+    this.blur();
+  });
+})();
 
 // ══════════════════════════════════════════════════════════════
 // 数据桥接（pywebview API）

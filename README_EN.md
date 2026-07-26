@@ -1,6 +1,8 @@
 # Huaci Assistant
 
 > **Select. Copy. Done.**
+>
+> 中文: [README.md](README.md)
 
 Select text, press `Ctrl+C` — a floating window pops up with translation, explanation, polish, or summary. No window switching, no extra hotkeys, no flow interruption.
 
@@ -118,5 +120,3 @@ Works with any OpenAI-compatible API:
 ## License
 
 MIT
-
-> 中文: [README.md](README.md)

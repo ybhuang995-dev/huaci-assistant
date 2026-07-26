@@ -4,8 +4,10 @@
 
 在任何应用中选中文字、按 `Ctrl+C`，悬浮窗自动弹出——翻译、解释、润色、总结，AI 已经帮你准备好了。不需要切换窗口，不需要额外快捷键，不打断你的心流。
 
+<p align="center">🚀 <a href="https://github.com/ybhuang995-dev/huaci-assistant/releases"><b>立即下载 EXE</b></a>（Windows 10+，无需 Python）</p>
+
 <p align="center">
-  <img src="images/悬浮窗分支树展示.png" alt="悬浮窗翻译与追问分支树" width="85%" />
+  <img src="https://raw.githubusercontent.com/ybhuang995-dev/huaci-assistant/main/images/%E6%82%AC%E6%B5%AE%E7%AA%97%E5%88%86%E6%94%AF%E6%A0%91%E5%B1%95%E7%A4%BA.png" alt="悬浮窗翻译与追问分支树" width="85%" />
 </p>
 
 ## 能做什么
@@ -69,13 +71,13 @@ python main.py
 托盘右键 → **设置**，所有配置都在一个面板里：
 
 <p align="center">
-  <img src="images/设置面板通用.png" alt="通用设置" width="45%" />
+  <img src="https://raw.githubusercontent.com/ybhuang995-dev/huaci-assistant/main/images/%E8%AE%BE%E7%BD%AE%E9%9D%A2%E6%9D%BF%E9%80%9A%E7%94%A8.png" alt="通用设置" width="45%" />
   &nbsp;
-  <img src="images/设置面板api配置.png" alt="API 配置" width="45%" />
+  <img src="https://raw.githubusercontent.com/ybhuang995-dev/huaci-assistant/main/images/%E8%AE%BE%E7%BD%AE%E9%9D%A2%E6%9D%BFapi%E9%85%8D%E7%BD%AE.png" alt="API 配置" width="45%" />
 </p>
 
 <p align="center">
-  <img src="images/设置面板模式prompt.png" alt="模式 Prompt 自定义" width="45%" />
+  <img src="https://raw.githubusercontent.com/ybhuang995-dev/huaci-assistant/main/images/%E8%AE%BE%E7%BD%AE%E9%9D%A2%E6%9D%BF%E6%A8%A1%E5%BC%8Fprompt.png" alt="模式 Prompt 自定义" width="45%" />
 </p>
 
 - **通用** — 窗口尺寸、字体、开机自启、自动路由等功能开关

@@ -46,7 +46,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-首次运行会提示缺少 `.env`，在托盘右键 → 设置 → API 配置中填写 Key 即可。或者手动 `cp .env.example .env` 编辑。
+首次运行在托盘右键 → 设置 → API 配置中填写 Key 即可，或手动 `cp .env.example .env` 编辑。
 
 > DeepSeek 免费注册获取 Key：https://platform.deepseek.com/api_keys
 

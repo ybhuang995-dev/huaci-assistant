@@ -158,6 +158,9 @@ class FloatingWindow:
         self._build_input_bar()       # BOTTOM（在操作栏上方）
         self._build_result_area()     # TOP expand 后 pack，吃剩余空间
 
+        # 根据配置刷新按钮可见性
+        self.refresh_history_btn()
+
         # 快捷键
         self.window.bind("<Escape>", lambda e: self.hide())
         self.window.bind("<Control-Return>", lambda e: self._copy_result())
@@ -254,6 +257,7 @@ class FloatingWindow:
             self.result_area = None
             self._sidebar_canvas = None
             self._sidebar_btn = None
+            self._history_btn = None
             self._sidebar_visible = False
             self._collapsed_nodes = set()
             self._active_node_id = None
@@ -429,11 +433,12 @@ class FloatingWindow:
         btn_frame = tk.Frame(bar, bg=C["surface"])
         btn_frame.pack(side=tk.LEFT, padx=4)
 
-        def _make_btn(text, command):
+        def _make_btn(text, command, pack=True):
             """用 Label 模拟按钮"""
             lbl = tk.Label(btn_frame, text=text, bg=C["surface"], fg=C["text"],
                            font=(FONT, 9), padx=8, pady=4, cursor="hand2")
-            lbl.pack(side=tk.LEFT, padx=2)
+            if pack:
+                lbl.pack(side=tk.LEFT, padx=2)
             lbl.bind("<Button-1>", lambda e: command())
             return lbl
 
@@ -443,8 +448,8 @@ class FloatingWindow:
         # 分支树侧边栏
         self._sidebar_btn = _make_btn("📂 分支树", self._toggle_sidebar)
 
-        # 历史记录按钮（由 Config.SAVE_HISTORY 控制可见性）
-        self._history_btn = _make_btn("📜 历史", self._toggle_history_sidebar)
+        # 历史记录按钮（由 Config.SAVE_HISTORY 控制可见性，不在这里 pack）
+        self._history_btn = _make_btn("📜 历史", self._toggle_history_sidebar, pack=False)
 
         # 重试
         _make_btn("🔄 重试", self._retry)

@@ -33,7 +33,7 @@
 
 ### 方式一：下载 EXE（推荐）
 
-从 [Releases](https://github.com/ybhuang995-dev/huaci-assistant/releases) 下载 `划词助手.exe`，双击运行。启动后托盘右键 → **设置** → **API 配置**，填写 Key 即用。
+从 [Releases](https://github.com/ybhuang995-dev/huaci-assistant/releases) 下载 `划词助手.exe`，双击即用。首次使用在托盘右键 → **设置** → **API 配置** 中填写 Key。
 
 ### 方式二：从源码运行
 

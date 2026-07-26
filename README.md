@@ -29,25 +29,25 @@
 
 **前提：** Windows 10+ · Python 3.10+ · 一个 API Key
 
+安装后有两种配置方式：
+
+### 方式一：设置面板（推荐）
+
+启动后托盘右键 → **设置** → **API 配置**，直接填写 Key、选择 Provider、测试连接，保存即生效。
+
+### 方式二：手动编辑 .env
+
 ```bash
-# 1. 克隆
-git clone https://github.com/ybhuang995-dev/huaci-assistant.git
-cd 划词助手
-
-# 2. 创建虚拟环境（推荐）
-python -m venv venv
-venv\Scripts\activate
-
-# 3. 安装依赖
-pip install -r requirements.txt
-
-# 4. 配置
 cp .env.example .env
-# 用编辑器打开 .env，填入你的 API Key
+# 用编辑器打开 .env，填入 API Key
 # 免费注册 DeepSeek：https://platform.deepseek.com/api_keys
+```
 
-# 5. 启动
+### 启动
+
+```bash
 python main.py
+# 或直接双击 run.bat
 ```
 
 启动后任务栏右下角出现托盘图标 🅐，右键可暂停监听、打开设置、退出。也可以直接双击 `run.bat` 一键启动。

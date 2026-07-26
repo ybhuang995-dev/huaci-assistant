@@ -22,5 +22,8 @@ dist/
 build/
 *.spec
 
+# 本地数据
+history.db
+
 # Claude Code
 .claude/worktrees/

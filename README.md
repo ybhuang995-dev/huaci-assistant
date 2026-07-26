@@ -40,19 +40,13 @@
 ```bash
 git clone https://github.com/ybhuang995-dev/huaci-assistant.git
 cd 划词助手
-
-# 安装依赖
 pip install -r requirements.txt
-
-# 配置 API Key（二选一）
-# A. 直接编辑 .env
-cp .env.example .env
-# 打开 .env 填入 Key（免费注册：https://platform.deepseek.com/api_keys）
-#
-# B. 启动后在设置面板中配置
-
 python main.py
 ```
+
+首次运行会提示缺少 `.env`，在托盘右键 → 设置 → API 配置中填写 Key 即可。或者手动 `cp .env.example .env` 编辑。
+
+> DeepSeek 免费注册获取 Key：https://platform.deepseek.com/api_keys
 
 启动后任务栏右下角出现托盘图标 🅐，右键可暂停监听、打开设置、退出。
 

@@ -222,6 +222,22 @@ class FloatingWindow:
                     break
         self._highlight_active_tab()
 
+    def set_route_hint(self, text: str) -> None:
+        """显示/更新自动路由提示文字"""
+        if hasattr(self, "_route_hint") and self._route_hint is not None:
+            try:
+                self._route_hint.configure(text=text)
+            except tk.TclError:
+                pass
+
+    def apply_classified_mode(self, mode_key: str) -> None:
+        """自动路由结果：更新 UI 模式，清空占位节点（不触发 _on_mode_switch）"""
+        self.current_mode = mode_key
+        self._highlight_active_tab()
+        self._tree_nodes = []
+        self._next_node_id = 0
+        self._add_node("query", self.original_text, "⏳ 正在处理，请稍候...", mode_key)
+
     def hide(self, event=None) -> None:
         self._hide_context_menu()
         if self.window:
@@ -240,6 +256,7 @@ class FloatingWindow:
             self._collapsed_nodes = set()
             self._active_node_id = None
             self._input_entry = None
+            self._route_hint = None
 
     # ── 标签栏 ──────────────────────────────────────────
 
@@ -288,6 +305,13 @@ class FloatingWindow:
 
         # 标签栏下方分隔线
         self._add_separator(self._inner, tk.TOP)
+
+        # 自动路由提示标签（默认隐藏）
+        self._route_hint = tk.Label(
+            self._inner, text="", bg=C["bg"], fg=C["accent"],
+            font=(FONT, 8), anchor="w",
+        )
+        self._route_hint.pack(fill=tk.X, side=tk.TOP, padx=12, pady=(2, 0))
 
         # 拖拽：标题栏
         bar.bind("<Button-1>", self._start_drag)
@@ -574,6 +598,17 @@ class FloatingWindow:
     li {{ margin: 2px 0; }}
     strong {{ color: {C['text']}; }}
     em {{ color: {C['subtext']}; }}
+    details {{
+        margin: 8px 0; padding: 10px 14px;
+        background: {C['surface']}; border: 1px solid {C['border']};
+        border-radius: 6px;
+    }}
+    details[open] {{ padding-bottom: 14px; }}
+    summary {{
+        cursor: pointer; font-size: 12px; color: {C['subtext']};
+        font-weight: 600; user-select: none;
+    }}
+    summary:hover {{ color: {C['text']}; }}
 </style>
 {body}
 </body>

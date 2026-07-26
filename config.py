@@ -34,6 +34,7 @@ class Config:
     FONT = os.getenv("FONT", "Microsoft YaHei UI")
     AUTO_DICT = os.getenv("AUTO_DICT", "true").lower() == "true"
     AUTO_START = os.getenv("AUTO_START", "false").lower() == "true"
+    AUTO_ROUTE = os.getenv("AUTO_ROUTE", "false").lower() == "true"
     PROVIDER = os.getenv("PROVIDER", "DeepSeek")
 
 
@@ -100,6 +101,30 @@ MODES = {
 
 # ── 保存出厂默认值（供设置面板"恢复默认"使用）─────────
 # 必须在 .env 覆盖之前保存，否则恢复默认拿到的是已修改的值
+
+# ── 自动路由分类器 Prompt ─────────────────────────────
+
+CLASSIFIER_PROMPT = (
+    "你是一个文本分类器。分析用户文本，只返回 {\"mode\": \"<key>\"}。\n\n"
+    "可用模式：\n"
+    "- translate: 非中文的外语文本（英文/日文/韩文等），需要翻译成中文\n"
+    "- ask: 中文问题、概念、术语、代码，需要解释或回答\n"
+    "- polish: 中文文本的语法和表达优化\n"
+    "- summarize: 长文本（>200字）的要点提炼\n"
+    "- dict: 单个英文单词的词典释义（发音+词性+例句）\n\n"
+    "判断规则（按顺序，命中即停）：\n"
+    "1. 单个英文单词（如 hello、algorithm、serendipity）→ dict\n"
+    "2. 非中文文本（英文句子/段落/日文/韩文）→ translate\n"
+    "3. 中文文本 → 按以下子规则：\n"
+    "   a. 包含疑问（什么/怎么/为什么/如何/能不能/解释/这段代码）→ ask\n"
+    "   b. 超过 200 字的长篇信息 → summarize\n"
+    "   c. 有明显语法错误、不通顺、需要改写 → polish\n"
+    "   d. 以上都不符合 → ask\n"
+    "4. 代码片段（任何编程语言）→ ask\n\n"
+    "⚠️ 中文文本永远不要选 translate。translate 只用于外语翻译成中文。\n"
+    "只返回 JSON，不要任何其他文字。"
+)
+
 _FACTORY_MODE_PROMPTS = {mk: MODES[mk]["system_prompt"] for mk in MODES}
 _FACTORY_MODE_ENABLED = {mk: True for mk in MODES}
 _FACTORY_FILTERS = {

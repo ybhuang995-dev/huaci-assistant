@@ -131,6 +131,7 @@ def _on_settings_saved(values: dict) -> None:
         Config.FONT = values.get("font", "Microsoft YaHei UI")
         Config.AUTO_DICT = values.get("autoDict", "true").lower() == "true"
         Config.AUTO_START = values.get("autoStart", "false").lower() == "true"
+        Config.AUTO_ROUTE = values.get("autoRoute", "false").lower() == "true"
         Config.PROVIDER = values.get("provider", "DeepSeek")
     except Exception as e:
         _log(f"SETTINGS: error reloading config: {e}")
@@ -273,22 +274,73 @@ def _make_follow_up_handler(window: FloatingWindow):
 
 def _start_query_for_text(root: tk.Tk, window: FloatingWindow,
                           text: str) -> None:
-    """显示窗口 + 发起 API 查询"""
+    """显示窗口 + 发起 API 查询（支持自动路由）"""
     global _query_counter
+
+    # 单词检测（快速路径，不触发 LLM 分类）
+    if is_single_english_word(text) and Config.AUTO_DICT:
+        initial_mode = "dict"
+        auto_route = False
+    else:
+        initial_mode = DEFAULT_MODE
+        auto_route = Config.AUTO_ROUTE
+
+    _log(f"MAIN: show window for [{text[:60]}], "
+         f"mode={initial_mode}, auto_route={auto_route}")
+
+    # 显示悬浮窗（加载状态）
+    window.show(text, "⏳ 正在处理，请稍候...", mode=initial_mode)
+
+    if auto_route:
+        # 后台分类，完成后自动切换模式 + 发起查询
+        window.set_route_hint("🤖 自动识别中…")
+        threading.Thread(
+            target=_classify_and_dispatch,
+            args=(root, window, text, initial_mode),
+            daemon=True,
+        ).start()
+    else:
+        # 直接发起查询（当前行为）
+        with _query_lock:
+            _query_counter += 1
+            qid = _query_counter
+        _work_queue.put((text, initial_mode, qid, None))
+
+
+def _classify_and_dispatch(root: tk.Tk, window: FloatingWindow,
+                           text: str, initial_mode: str) -> None:
+    """后台线程：LLM 分类 → 主线程更新 UI + 发起查询"""
+    global _query_counter
+    try:
+        classified_mode = engine.classify(text)
+    except Exception as e:
+        _log(f"ROUTE: classify error: {e}")
+        classified_mode = initial_mode
+
+    _log(f"ROUTE: [{text[:40]}...] → {classified_mode}")
+
+    # 在外层拿 qid（_apply 闭包里 += 会触发 UnboundLocalError）
     with _query_lock:
         _query_counter += 1
         qid = _query_counter
 
-    # 单词检测：单个英文单词 → 自动切换词典模式
-    mode = "dict" if is_single_english_word(text) else DEFAULT_MODE
+    def _apply() -> None:
+        if window.window is None:
+            _log("ROUTE: window closed before dispatch")
+            return
+        try:
+            mode_label = MODES[classified_mode]["label"]
+        except KeyError:
+            mode_label = classified_mode
+        try:
+            window.set_route_hint(f"🤖 自动识别为：{mode_label}")
+            window.apply_classified_mode(classified_mode)
+            _work_queue.put((text, classified_mode, qid, None))
+            _log(f"ROUTE: dispatched [{mode_label}] qid={qid}")
+        except Exception as e:
+            _log(f"ROUTE: dispatch error: {e}")
 
-    _log(f"MAIN: show window for [{text[:60]}], mode={mode}, qid={qid}")
-
-    # 显示悬浮窗（加载状态）
-    window.show(text, "⏳ 正在处理，请稍候...", mode=mode)
-
-    # 放入工作队列
-    _work_queue.put((text, mode, qid, None))
+    root.after(0, _apply)
 
 
 # ═══════════════════════════════════════════════════════════

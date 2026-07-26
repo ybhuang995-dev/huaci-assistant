@@ -24,6 +24,7 @@ _KEY_MAP = {
     "font": "FONT",
     "autoStart": "AUTO_START",
     "autoDict": "AUTO_DICT",
+    "autoRoute": "AUTO_ROUTE",
     "provider": "PROVIDER",
     "apiKey": "DEEPSEEK_API_KEY",
     "baseUrl": "DEEPSEEK_BASE_URL",
@@ -57,6 +58,7 @@ class SettingsApi:
             "font": Config.FONT,
             "autoStart": Config.AUTO_START,
             "autoDict": Config.AUTO_DICT,
+            "autoRoute": Config.AUTO_ROUTE,
             "provider": Config.PROVIDER,
             "apiKey": Config.DEEPSEEK_API_KEY,
             "baseUrl": Config.DEEPSEEK_BASE_URL,
@@ -89,6 +91,7 @@ class SettingsApi:
             "font": "Microsoft YaHei UI",
             "autoStart": False,
             "autoDict": True,
+            "autoRoute": False,
             # API 配置保留当前值，不随"恢复默认"清除
             "provider": Config.PROVIDER,
             "apiKey": Config.DEEPSEEK_API_KEY,
@@ -236,6 +239,7 @@ class SettingsWindow:
             "defaultMode": _ev("DEFAULT_MODE", DEFAULT_MODE),
             "font": _ev("FONT", Config.FONT),
             "autoDict": _ev("AUTO_DICT", str(Config.AUTO_DICT)),
+            "autoRoute": _ev("AUTO_ROUTE", str(Config.AUTO_ROUTE)),
             "autoStart": _ev("AUTO_START", str(Config.AUTO_START)),
             "provider": _ev("PROVIDER", Config.PROVIDER),
             # 字典字段（传原始 dict，main.py 用它们更新 MODES 等）

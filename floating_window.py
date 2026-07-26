@@ -92,8 +92,10 @@ class FloatingWindow:
 
         # 分支树侧边栏
         self._sidebar_visible = False
+        self._sidebar_mode = "tree"   # "tree" | "history"
         self._sidebar_canvas: tk.Canvas | None = None
         self._collapsed_nodes: set = set()  # 已折叠的节点 ID
+        self._history_btn: tk.Label | None = None  # 历史按钮引用
 
         # 追问输入框
         self._input_entry: tk.Entry | None = None
@@ -441,6 +443,9 @@ class FloatingWindow:
         # 分支树侧边栏
         self._sidebar_btn = _make_btn("📂 分支树", self._toggle_sidebar)
 
+        # 历史记录按钮（由 Config.SAVE_HISTORY 控制可见性）
+        self._history_btn = _make_btn("📜 历史", self._toggle_history_sidebar)
+
         # 重试
         _make_btn("🔄 重试", self._retry)
 
@@ -617,28 +622,69 @@ class FloatingWindow:
     # ── 分支树侧边栏 ──────────────────────────────────
 
     def _toggle_sidebar(self) -> None:
-        """切换侧边栏显示/隐藏"""
-        self._sidebar_visible = not self._sidebar_visible
-        if self._sidebar_visible:
-            # 拿到 outer 的已有子控件（排除 sidebar_frame 自身）
-            siblings = [c for c in self._sidebar_frame.master.winfo_children()
-                        if c is not self._sidebar_frame]
-            if siblings:
-                self._sidebar_frame.pack(fill=tk.Y, side=tk.LEFT,
-                                         before=siblings[0])
-            else:
-                self._sidebar_frame.pack(fill=tk.Y, side=tk.LEFT)
-            self._render_sidebar()
-        else:
+        """切换侧边栏显示/隐藏（分支树模式）"""
+        if self._sidebar_visible and self._sidebar_mode == "tree":
             self._sidebar_frame.pack_forget()
+            self._sidebar_visible = False
+            self._update_sidebar_btn()
+            self._update_history_btn_text()
+            return
+
+        # 确保侧边栏可见，切换到分支树模式
+        self._sidebar_mode = "tree"
+        self._open_sidebar()
+        self._render_sidebar()
         self._update_sidebar_btn()
+        self._update_history_btn_text()
+
+    def _toggle_history_sidebar(self) -> None:
+        """切换历史记录侧边栏"""
+        if self._sidebar_visible and self._sidebar_mode == "history":
+            self._sidebar_frame.pack_forget()
+            self._sidebar_visible = False
+            self._update_sidebar_btn()
+            self._update_history_btn_text()
+            return
+
+        # 确保侧边栏可见，切换到历史模式
+        self._sidebar_mode = "history"
+        self._open_sidebar()
+        self._render_history_sidebar()
+        self._update_sidebar_btn()
+        self._update_history_btn_text()
+
+    def _open_sidebar(self) -> None:
+        """展开侧边栏 frame"""
+        siblings = [c for c in self._sidebar_frame.master.winfo_children()
+                    if c is not self._sidebar_frame]
+        if siblings:
+            self._sidebar_frame.pack(fill=tk.Y, side=tk.LEFT,
+                                     before=siblings[0])
+        else:
+            self._sidebar_frame.pack(fill=tk.Y, side=tk.LEFT)
+        self._sidebar_visible = True
 
     def _update_sidebar_btn(self) -> None:
         """更新侧边栏按钮文字"""
         if hasattr(self, "_sidebar_btn") and self._sidebar_btn is not None:
             try:
-                self._sidebar_btn.configure(
-                    text="📂 关闭分支" if self._sidebar_visible else "📂 分支树")
+                if self._sidebar_visible and self._sidebar_mode == "tree":
+                    text = "📂 关闭分支"
+                else:
+                    text = "📂 分支树"
+                self._sidebar_btn.configure(text=text)
+            except tk.TclError:
+                pass
+
+    def _update_history_btn_text(self) -> None:
+        """更新历史按钮文字"""
+        if hasattr(self, "_history_btn") and self._history_btn is not None:
+            try:
+                if self._sidebar_visible and self._sidebar_mode == "history":
+                    text = "📜 关闭历史"
+                else:
+                    text = "📜 历史"
+                self._history_btn.configure(text=text)
             except tk.TclError:
                 pass
 
@@ -752,6 +798,131 @@ class FloatingWindow:
             return  # 已经是活跃节点
         self._active_node_id = node_id
         self._render_tree()  # 内部会刷新 sidebar
+
+    # ── 历史记录侧边栏 ──────────────────────────────────
+
+    def _render_history_sidebar(self) -> None:
+        """渲染历史记录列表到侧边栏 Canvas"""
+        import history as _hist
+
+        if self._sidebar_canvas is None:
+            return
+        try:
+            self._sidebar_canvas.delete("all")
+
+            records = _hist.get_recent(limit=100)
+            if not records:
+                self._sidebar_canvas.create_text(
+                    100, 40, text="(暂无历史记录)", anchor="center",
+                    fill=C["subtext"], font=(FONT, 10),
+                )
+                return
+
+            y = 8
+            for rec in records:
+                rid = rec["id"]
+                ts = rec["timestamp"]
+                # 显示日期时间
+                try:
+                    dt = ts.replace("T", " ")[:16]
+                except Exception:
+                    dt = ts[:16]
+                mode_label = rec.get("mode_label", rec["mode"])
+                text_preview = rec["text"].replace("\n", " ").strip()
+                if len(text_preview) > 28:
+                    text_preview = text_preview[:28] + "…"
+
+                # 模式色圆点 + 时间
+                accent = MODE_ACCENT.get(rec["mode"], C["accent"])
+                self._sidebar_canvas.create_oval(
+                    8, y + 4, 14, y + 10, fill=accent, outline="",
+                    tags=("side_item",),
+                )
+                self._sidebar_canvas.create_text(
+                    20, y, text=f"{dt}  {mode_label}", anchor="nw",
+                    fill=C["subtext"], font=(FONT, 8),
+                    tags=("side_item",),
+                )
+
+                y += 16
+
+                # 原文预览
+                tag = f"hist_{rid}"
+                self._sidebar_canvas.create_text(
+                    20, y, text=text_preview, anchor="nw",
+                    fill=C["text"], font=(FONT, 9),
+                    tags=(tag, "side_item"),
+                )
+                self._sidebar_canvas.tag_bind(
+                    tag, "<Button-1>",
+                    lambda e, rid=rid: self._load_history(rid))
+                self._sidebar_canvas.tag_bind(
+                    tag, "<Enter>",
+                    lambda e: self._sidebar_canvas.configure(cursor="hand2"))
+                self._sidebar_canvas.tag_bind(
+                    tag, "<Leave>",
+                    lambda e: self._sidebar_canvas.configure(cursor=""))
+
+                y += 22
+
+                # 分隔线
+                self._sidebar_canvas.create_line(
+                    10, y, 190, y, fill=C["border"],
+                    tags=("side_item",),
+                )
+                y += 8
+
+            bbox = self._sidebar_canvas.bbox("all")
+            if bbox:
+                self._sidebar_canvas.configure(
+                    scrollregion=(0, 0, 200, bbox[3] + 8))
+
+        except tk.TclError:
+            pass
+
+    def _load_history(self, record_id: int) -> None:
+        """加载一条历史记录到主结果区（只读回放）"""
+        import history as _hist
+
+        chain = _hist.get_chain(record_id)
+        if not chain:
+            return
+
+        # 清空当前树，用历史链填充
+        self._tree_nodes = []
+        self._next_node_id = 0
+        self._collapsed_nodes.clear()
+
+        # 逐条插入树
+        node_id_map = {}  # db id → tree node id
+        for rec in chain:
+            parent_tree_id = None
+            if rec["parent_id"] is not None:
+                parent_tree_id = node_id_map.get(rec["parent_id"])
+
+            node = self._add_node(
+                "query", rec["text"], rec["result"], rec["mode"],
+                parent_tree_id,
+            )
+            node_id_map[rec["id"]] = node["id"]
+
+        # 设置活跃节点为链末尾
+        if self._tree_nodes:
+            self._active_node_id = self._tree_nodes[-1]["id"]
+
+        self._render_tree()
+
+    def refresh_history_btn(self) -> None:
+        """根据 Config.SAVE_HISTORY 显示/隐藏历史按钮"""
+        if self._history_btn is None:
+            return
+        try:
+            if Config.SAVE_HISTORY:
+                self._history_btn.pack(side=tk.LEFT, padx=2)
+            else:
+                self._history_btn.pack_forget()
+        except tk.TclError:
+            pass
 
     # ── 追问输入栏 ──────────────────────────────────────
 

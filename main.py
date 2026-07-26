@@ -234,6 +234,7 @@ def _on_settings_saved(values: dict) -> None:
         Config.AUTO_DICT = values.get("autoDict", "true").lower() == "true"
         Config.AUTO_START = values.get("autoStart", "false").lower() == "true"
         Config.AUTO_ROUTE = values.get("autoRoute", "false").lower() == "true"
+        Config.SAVE_HISTORY = values.get("saveHistory", "false").lower() == "true"
         Config.HOTKEY_PAUSE = values.get("hotkeyPause", "ctrl+shift+p")
         Config.PROVIDER = values.get("provider", "DeepSeek")
         # 开机自启：立即生效
@@ -283,6 +284,7 @@ def _on_settings_saved(values: dict) -> None:
                 height=Config.WINDOW_HEIGHT,
             )
             _window_ref.refresh_tabs()
+            _window_ref.refresh_history_btn()
             _log(f"SETTINGS: window resized to {Config.WINDOW_WIDTH}x{Config.WINDOW_HEIGHT}")
         except Exception as e:
             _log(f"SETTINGS: resize failed: {e}")
@@ -348,6 +350,17 @@ def _worker(root: tk.Tk, window: FloatingWindow) -> None:
 
         if accumulated:
             _log(f"WORKER: stream done, total len={len(accumulated)}")
+            # 写入历史记录（在主线程执行，避免 SQLite 线程问题）
+            if Config.SAVE_HISTORY:
+                try:
+                    import history as _hist
+                    root.after(0, lambda: _hist.save(
+                        text, accumulated, mode,
+                        parent_id=None if not follow_up_data else None,
+                        root_id=None,
+                    ))
+                except Exception as e:
+                    _log(f"HISTORY: save error: {e}")
 
 
 # ═══════════════════════════════════════════════════════════

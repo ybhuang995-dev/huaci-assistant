@@ -30,7 +30,7 @@
 
 ```bash
 # 1. 克隆仓库
-git clone <your-repo-url>
+git clone https://github.com/ybhuang995-dev/huaci-assistant.git
 cd 划词助手
 
 # 2. 安装依赖

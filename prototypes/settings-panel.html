@@ -395,7 +395,7 @@
         <span class="nav-icon">ℹ️</span> 关于
       </div>
 
-      <div class="nav-footer">划词助手 v1.2.0</div>
+      <div class="nav-footer">划词助手 v1.3.0</div>
     </div>
 
     <!-- ════ 通用设置 ════ -->
@@ -519,7 +519,7 @@
       <div class="form-group">
         <label>API Provider</label>
         <select data-key="provider" id="select-provider">
-          <option value="DeepSeek" data-base-url="https://api.deepseek.com/v1" data-model="deepseek-chat">DeepSeek</option>
+          <option value="DeepSeek" data-base-url="https://api.deepseek.com/v1" data-model="deepseek-v4-flash">DeepSeek</option>
           <option value="OpenAI" data-base-url="https://api.openai.com/v1" data-model="gpt-4o">OpenAI</option>
           <option value="custom" data-base-url="" data-model="">自定义 (OpenAI 兼容)</option>
         </select>
@@ -542,7 +542,7 @@
 
       <div class="form-group">
         <label>模型名称</label>
-        <input type="text" data-key="model" value="deepseek-chat" placeholder="gpt-4o / deepseek-chat / ...">
+        <input type="text" data-key="model" value="deepseek-v4-flash" placeholder="gpt-4o / deepseek-v4-flash / ...">
       </div>
 
       <div class="form-group" style="margin-top:20px">
@@ -675,13 +675,16 @@
         <div style="font-size:40px;margin-bottom:12px">📝</div>
         <div style="font-size:16px;font-weight:700;color:var(--text)">划词助手</div>
         <div style="font-size:12px;color:var(--subtext);margin-top:2px">Word Selection Assistant</div>
-        <div style="font-size:11px;color:var(--subtext);margin-top:6px">版本 1.2.0</div>
+        <div style="font-size:11px;color:var(--subtext);margin-top:6px">版本 1.3.0 （测试版）</div>
       </div>
 
       <div style="background:var(--surface);border-radius:8px;padding:14px 16px;font-size:11px;color:var(--text);line-height:1.8">
-        <div><strong>技术栈：</strong>Python 3.10+ · tkinter · httpx · DeepSeek API</div>
-        <div><strong>设计灵感：</strong>OpenAI Translator——"复制即翻译"</div>
+        <div><strong>技术栈：</strong>Python 3.10+ · tkinter · pystray · pywebview · httpx · SQLite</div>
+        <div style="margin-top:6px;padding:6px 8px;background:#fef3c7;border-radius:4px;color:#92400e">
+          ⚠️ <strong>测试版</strong> — 功能仍在迭代，欢迎反馈问题或建议。
+        </div>
         <div><strong>作者：</strong>ybhuang995</div>
+        <div><strong>反馈：</strong><a href="https://github.com/ybhuang995/划词助手/issues" style="color:var(--accent)">GitHub Issues</a></div>
         <div><strong>许可证：</strong>MIT</div>
       </div>
     </div>

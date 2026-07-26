@@ -8,7 +8,6 @@
 pip install -r requirements.txt   # 安装依赖（首次）
 python main.py                    # 启动（托盘常驻，Ctrl+C 复制触发）
 run.bat                           # Windows 一键启动
-python test_ui.py                 # 诊断用：独立测试悬浮窗组件渲染
 ```
 
 ## 项目定位
@@ -271,8 +270,8 @@ node = {
 - SQLite 历史记录 — 自动保存、侧边栏浏览、追问链回放、单条/全部删除
 
 ### 📋 Phase 3
-- PyInstaller 打包单 exe（开机自启 `AUTO_START` 已实现 ✅）
-- 自定义 Prompt（设置面板已支持编辑，热生效 ✅）
+- 自定义 Prompt（已在设置面板中支持编辑，热生效 ✅）
+- PyInstaller 打包单 exe（`划词助手.spec`，52MB，工作正常 ✅）
 
 ## 行为边界
 

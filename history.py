@@ -6,13 +6,21 @@
 """
 
 import sqlite3
+import sys
 import threading
 from pathlib import Path
 from datetime import datetime, timedelta
 
 from config import Config
 
-_DB_PATH = Path(__file__).parent / "history.db"
+def _get_data_dir():
+    """返回数据目录路径。—— 打包后使用 exe 所在目录，开发中使用项目根目录"""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    return Path(__file__).parent
+
+
+_DB_PATH = _get_data_dir() / "history.db"
 _lock = threading.Lock()
 
 

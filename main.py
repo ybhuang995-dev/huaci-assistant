@@ -227,7 +227,7 @@ def _on_settings_saved(values: dict) -> None:
         Config.WINDOW_HEIGHT = int(values.get("windowHeight", 400))
         Config.DEEPSEEK_API_KEY = values.get("apiKey", "")
         Config.DEEPSEEK_BASE_URL = values.get("baseUrl", "")
-        Config.DEEPSEEK_MODEL = values.get("model", "deepseek-chat")
+        Config.DEEPSEEK_MODEL = values.get("model", "deepseek-v4-flash")
         Config.POLL_INTERVAL = float(int(values.get("pollInterval", 400)) / 1000)
         Config.DEFAULT_MODE = values.get("defaultMode", "translate")
         Config.FONT = values.get("font", "Microsoft YaHei UI")
@@ -519,7 +519,8 @@ def main() -> None:
     if not Config.DEEPSEEK_API_KEY:
         print("=" * 50, flush=True)
         print("[WARN] 未配置 DEEPSEEK_API_KEY！", flush=True)
-        print("请复制 .env.example 为 .env 并填入 Key", flush=True)
+        print("请通过托盘 → 设置 填写 API Key", flush=True)
+        print("或复制 .env.example 为 .env 并填入 Key", flush=True)
         print("=" * 50, flush=True)
 
     # Tkinter 根窗口（隐藏）
@@ -535,6 +536,10 @@ def main() -> None:
     # 设置面板
     global _settings_window
     _settings_window = SettingsWindow(root, on_save=_on_settings_saved)
+
+    # ── 首次启动引导：无 API Key 时自动弹出设置面板 ──
+    if not Config.DEEPSEEK_API_KEY:
+        root.after(800, lambda: _settings_window.show())
 
     # 剪贴板监听
     global _monitor_ref

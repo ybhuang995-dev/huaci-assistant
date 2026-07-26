@@ -6,10 +6,19 @@
 
 import json as _json
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent / ".env")
+
+def _get_data_dir() -> Path:
+    """数据目录。—— 打包后 exe 同目录，开发中项目根目录"""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    return Path(__file__).parent
+
+
+load_dotenv(_get_data_dir() / ".env")
 
 
 class Config:
@@ -20,7 +29,7 @@ class Config:
     DEEPSEEK_BASE_URL = os.getenv(
         "DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"
     )
-    DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 
     # ── 剪贴板监听 ──────────────────────────────────────
     POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "0.4"))  # 轮询间隔（秒）

@@ -6,6 +6,7 @@
 """
 
 import json as _json
+import sys
 import threading
 import webview
 from pathlib import Path
@@ -14,7 +15,28 @@ from config import (Config, MODES, DEFAULT_MODE,
                      _FACTORY_MODE_PROMPTS, _FACTORY_MODE_ENABLED,
                      _FACTORY_FILTERS)
 
-_HTML_PATH = str(Path(__file__).parent / "prototypes" / "settings-panel.html")
+
+def _get_prototype_path(filename: str) -> str:
+    """返回原型文件的绝对路径，打包后从 sys._MEIPASS 读取。"""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包后：资源都在 _MEIPASS 临时目录
+        import os as _os
+        return str(_os.path.join(sys._MEIPASS, "prototypes", filename))  # noqa: SLF001
+    return str(Path(__file__).parent / "prototypes" / filename)
+
+
+def _get_data_dir() -> Path:
+    """返回数据目录的路径。
+
+    - 打包后：exe 所在目录（.env 和 history.db 放在 exe 旁边）
+    - 开发时：项目根目录
+    """
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    return Path(__file__).parent
+
+
+_HTML_PATH = _get_prototype_path("settings-panel.html")
 
 # ── JS → Python 字段名映射（简单字段） ──
 _KEY_MAP = {
@@ -180,7 +202,7 @@ class SettingsWindow:
 
     def _apply_save(self, data: dict) -> None:
         """将 JS 传来的数据写入 .env 并回调 main.py"""
-        env_path = Path(__file__).parent / ".env"
+        env_path = _get_data_dir() / ".env"
 
         # ── 简单字段：JS camelCase → Python UPPER_CASE ──
         values = {}

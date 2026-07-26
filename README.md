@@ -119,4 +119,8 @@ python main.py
 
 MIT
 
+> [English](README_EN.md)
+
+> [English version](README_EN.md)
+
 > [English version](README_EN.md)

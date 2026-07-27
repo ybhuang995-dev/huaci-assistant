@@ -3,12 +3,33 @@ LLM 引擎模块
 -----------
 引擎抽象 + DeepSeek 实现。
 所有模式（翻译/提问/润色/总结）共用同一调用逻辑，差异只在 system prompt。
-支持非流式（query）和 SSE 流式（query_stream）两种调用。
+支持 SSE 流式调用。
+
+v2：用标准库 urllib 替代 httpx，避免 httpcore + OpenSSL 1.1.1n 的 TLS 兼容问题。
 """
 
 import json
-import httpx
+import ssl
+import socket
+import urllib.request
 from config import Config, MODES, build_classifier_prompt, DEFAULT_MODE, MODE_ENABLED
+
+# 创建 SSL context（PyInstaller 打包后 certifi 路径变化，显式加载）
+try:
+    import certifi as _certifi
+    _SSL_CONTEXT = ssl.create_default_context(
+        cafile=_certifi.where(),
+        purpose=ssl.Purpose.SERVER_AUTH,
+    )
+except Exception:
+    _SSL_CONTEXT = ssl.create_default_context()
+
+
+def _http_request(method: str, url: str, headers: dict, body: bytes = None,
+                  timeout: float = 60.0) -> urllib.request.http.client.HTTPResponse:
+    """发送 HTTP 请求，返回 response 对象（需调用方管理生命周期）。"""
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    return urllib.request.urlopen(req, timeout=timeout, context=_SSL_CONTEXT)
 
 
 class DeepSeekEngine:
@@ -107,75 +128,75 @@ class DeepSeekEngine:
         推理模型的思考链用 <details> 包裹，可在 UI 中折叠。
         """
         in_reasoning = False
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         try:
-            with httpx.stream("POST", url, json=payload, headers=headers,
-                              timeout=60.0) as resp:
-                resp.raise_for_status()
-                for line in resp.iter_lines():
-                    line = line.strip()
-                    if not line or not line.startswith("data:"):
-                        continue
-                    data_str = line[5:].strip()
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                        delta = (
-                            chunk.get("choices", [{}])[0]
-                            .get("delta", {})
-                        )
-                        reasoning = delta.get("reasoning_content", "")
-                        content = delta.get("content", "")
-                        if reasoning:
-                            if not in_reasoning:
-                                yield ('\n<details>\n'
-                                       '<summary>💭 思考过程</summary>\n\n')
-                                in_reasoning = True
-                            yield reasoning
-                        if content:
-                            if in_reasoning:
-                                yield '\n</details>\n\n'
-                                in_reasoning = False
-                            yield content
-                    except (json.JSONDecodeError, KeyError, IndexError):
-                        continue
-                # 流正常结束 — 关闭未闭合的 details
-                if in_reasoning:
-                    yield '\n</details>\n'
-                    in_reasoning = False
+            resp = _http_request("POST", url, headers, body, timeout=60.0)
 
-        except httpx.TimeoutException:
+            # 检查 HTTP 状态码
+            status = resp.status
+            if status == 401:
+                yield "🔑 API Key 无效，请检查 .env 中的 DEEPSEEK_API_KEY。"
+                return
+            elif status == 429:
+                yield "🔄 请求过于频繁，请稍后重试。"
+                return
+            elif status == 402:
+                yield "💰 API 余额不足，请充值。"
+                return
+            elif status >= 400:
+                yield f"⚠️ API 错误（HTTP {status}）"
+                return
+
+            # 逐行读取 SSE 流
+            for line_bytes in resp:
+                line = line_bytes.decode("utf-8", errors="replace").strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                data_str = line[5:].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    delta = (
+                        chunk.get("choices", [{}])[0]
+                        .get("delta", {})
+                    )
+                    reasoning = delta.get("reasoning_content", "")
+                    content = delta.get("content", "")
+                    if reasoning:
+                        if not in_reasoning:
+                            yield ('\n<details>\n'
+                                   '<summary>💭 思考过程</summary>\n\n')
+                            in_reasoning = True
+                        yield reasoning
+                    if content:
+                        if in_reasoning:
+                            yield '\n</details>\n\n'
+                            in_reasoning = False
+                        yield content
+                except (json.JSONDecodeError, KeyError, IndexError):
+                    continue
+
+            if in_reasoning:
+                yield '\n</details>\n'
+
+        except urllib.error.URLError as e:
+            if in_reasoning:
+                yield '\n</details>\n'
+            reason = str(e.reason) if e.reason else str(e)
+            yield f"🌐 网络连接失败：{reason}"
+            yield self._diagnose_ssl()
+        except socket.timeout:
             if in_reasoning:
                 yield '\n</details>\n'
             yield "⏱️ 请求超时，请重试。"
-        except httpx.ConnectError:
-            if in_reasoning:
-                yield '\n</details>\n'
-            yield "🌐 网络连接失败，请检查网络或代理设置。"
-        except httpx.HTTPStatusError as e:
-            if in_reasoning:
-                yield '\n</details>\n'
-            status = e.response.status_code
-            if status == 401:
-                yield "🔑 API Key 无效，请检查 .env 中的 DEEPSEEK_API_KEY。"
-            elif status == 429:
-                yield "🔄 请求过于频繁，请稍后重试。"
-            elif status == 402:
-                yield "💰 API 余额不足，请充值。"
-            else:
-                yield f"⚠️ API 错误（HTTP {status}）"
         except Exception as e:
             if in_reasoning:
                 yield '\n</details>\n'
             yield f"❌ 未知错误：{e}"
 
     def classify(self, text: str) -> str:
-        """轻量级文本分类，返回模式 key。
-
-        用极简 prompt + temperature=0 让 LLM 快速判断文本模式。
-        兼容推理模型（reasoning_content）和普通模型（content）。
-        失败时 fallback 到 DEFAULT_MODE。
-        """
+        """轻量级文本分类，返回模式 key。"""
         if not self.api_key or len(text) < 2:
             return DEFAULT_MODE
 
@@ -190,39 +211,85 @@ class DeepSeekEngine:
                 {"role": "system", "content": build_classifier_prompt()},
                 {"role": "user", "content": text},
             ],
-            "max_tokens": 200,   # 推理模型需要 extra token 给 reasoning
+            "max_tokens": 200,
             "temperature": 0,
             "stream": False,
         }
 
         try:
-            resp = httpx.post(url, json=payload, headers=headers, timeout=5.0)
-            resp.raise_for_status()
-            data = resp.json()
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            resp = _http_request("POST", url, headers, body, timeout=5.0)
+            data = json.loads(resp.read().decode("utf-8"))
             msg = data.get("choices", [{}])[0].get("message", {})
             content = msg.get("content", "").strip()
-            # 兼容推理模型：content 可能为空，输出在 reasoning_content 中
             if not content:
                 reasoning = msg.get("reasoning_content", "").strip()
                 if reasoning:
-                    # 从推理内容末尾提取 JSON（推理模型可能在推理后输出）
-                    # 尝试找 JSON 片段
                     import re as _re
                     m = _re.search(r'\{[^}]+\}', reasoning)
                     if m:
                         content = m.group()
-            # 解析 JSON（兼容 markdown 代码块包裹）
             if content.startswith("```"):
                 content = content.split("\n", 1)[-1].rsplit("\n```", 1)[0].strip()
             result = json.loads(content)
             mode = result.get("mode", DEFAULT_MODE)
-            # 验证 mode 有效性
             if mode in MODES:
                 return mode
         except Exception:
             pass
 
         return DEFAULT_MODE
+
+    def _diagnose_ssl(self) -> str:
+        """诊断 SSL/TLS 连接问题，返回调试信息。"""
+        lines = ["\n\n--- 🔍 SSL 诊断 ---"]
+        try:
+            import certifi
+            lines.append(f"certifi 路径：{certifi.__file__}")
+            lines.append(f"CA bundle：{certifi.where()}")
+            import os as _os
+            lines.append(f"CA 文件存在：{_os.path.exists(certifi.where())}")
+        except Exception as ex:
+            lines.append(f"certifi 加载失败：{ex}")
+
+        try:
+            lines.append(f"OpenSSL 版本：{ssl.OPENSSL_VERSION}")
+        except Exception as ex:
+            lines.append(f"ssl 模块状态：{ex}")
+
+        try:
+            # socket 级 TLS 直连（绕过所有 HTTP 库）
+            sock = socket.create_connection(("api.deepseek.com", 443), timeout=10)
+            ssock = _SSL_CONTEXT.wrap_socket(sock, server_hostname="api.deepseek.com")
+            lines.append(f"socket TLS 直连：ok, cipher={ssock.cipher()[0]}, tls={ssock.version()}")
+            ssock.send(b"GET / HTTP/1.1\r\nHost: api.deepseek.com\r\n\r\n")
+            data = ssock.recv(1024)
+            lines.append(f"HTTP 响应：{data.decode().split(chr(13)+chr(10))[0]}")
+            ssock.close()
+        except Exception as ex:
+            lines.append(f"socket TLS 直连失败：{ex}")
+
+        try:
+            addrs = socket.getaddrinfo("api.deepseek.com", 443)
+            lines.append(f"DNS 解析：ok ({addrs[0][4][0] if addrs else '?'})")
+        except Exception as ex:
+            lines.append(f"DNS 解析失败：{ex}")
+
+        try:
+            lines.append(f"HTTP_PROXY={(__import__('os').getenv('HTTP_PROXY') or '无')}")
+            lines.append(f"HTTPS_PROXY={(__import__('os').getenv('HTTPS_PROXY') or '无')}")
+        except Exception:
+            pass
+
+        try:
+            # urllib GET 测试
+            req = urllib.request.Request("https://api.deepseek.com/v1/models")
+            resp = urllib.request.urlopen(req, timeout=10, context=_SSL_CONTEXT)
+            lines.append(f"urllib GET：HTTP {resp.status}")
+        except Exception as ex:
+            lines.append(f"urllib GET：{ex}")
+
+        return "\n".join(lines)
 
     def test_connection(self, api_key: str = None, base_url: str = None,
                         model: str = None) -> bool:
@@ -234,20 +301,20 @@ class DeepSeekEngine:
         if not key:
             raise ValueError("API Key 未配置")
 
-        resp = httpx.post(
-            f"{url}/chat/completions",
-            json={
-                "model": mdl,
-                "messages": [{"role": "user", "content": "Hi"}],
-                "max_tokens": 1,
-            },
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-            },
-            timeout=15.0,
-        )
-        resp.raise_for_status()
+        body = json.dumps({
+            "model": mdl,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 1,
+        }, ensure_ascii=False).encode("utf-8")
+
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        }
+
+        resp = _http_request("POST", f"{url}/chat/completions", headers, body,
+                             timeout=15.0)
+        resp.read()  # consume response
         return True
 
 

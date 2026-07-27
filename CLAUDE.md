@@ -50,7 +50,7 @@ Windows 桌面工具：在任意应用中选中文字，Ctrl+C 复制，自动�
 - **设置面板 UI**：`pywebview` + Windows WebView2，直接渲染 HTML/CSS/JS 原型（100% 还原 CSS 视觉效果，替代已废弃的 CustomTkinter）
 - **结果渲染**：`markdown` + `tkinterweb.HtmlFrame`（替代 tkinter Text 控件）
 - **剪贴板**：`ctypes` 直接调用 Windows API（`OpenClipboard`/`GetClipboardData`/`GlobalLock`），轮询 400ms
-- **LLM**：DeepSeek API（OpenAI 兼容），`httpx` SSE 流式调用
+- **LLM**：DeepSeek API（OpenAI 兼容），标准库 `urllib` SSE 流式调用
 - **托盘**：`pystray` + `Pillow`
 - **配置**：`python-dotenv` 加载 `.env`，14 个字段支持运行时热更新
 
@@ -260,7 +260,7 @@ node = {
 - Enter 复制、Esc 关闭、拖拽移动
 
 ### ✅ Phase 2
-- SSE 流式输出（`requests` → `httpx`）
+- SSE 流式输出（使用标准库 `urllib`，避免打包环境中的 TLS 兼容问题）
 - 单词检测 → 词典模式（发音+词性+例句）
 - 托盘菜单暂停/恢复监听（`monitor.pause()` / `resume()`）
 - 侧边栏子树折叠/展开（`▶` / `▼` 点击切换）

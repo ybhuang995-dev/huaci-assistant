@@ -1,5 +1,6 @@
 # 密钥
 .env
+dist/.env
 
 # 日志
 app.log
@@ -21,6 +22,7 @@ __pycache__/
 dist/
 build/
 *.spec
+!划词助手.spec
 
 # 本地数据
 history.db

@@ -44,7 +44,7 @@ python main.py
 - 设置面板：`pywebview` + Windows WebView2
 - Markdown 渲染：`markdown` + `tkinterweb.HtmlFrame`
 - 剪贴板：`ctypes` 调用 Windows API
-- LLM：DeepSeek 的 OpenAI 兼容接口，使用 `httpx` SSE 流式请求
+- LLM：DeepSeek 的 OpenAI 兼容接口，使用标准库 `urllib` 处理 SSE 流式请求
 - 系统托盘：`pystray` + `Pillow`
 - 配置：`python-dotenv` + `.env`
 - 历史记录：SQLite

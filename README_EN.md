@@ -43,6 +43,7 @@ The application is written in Python, with a tkinter-based floating window and a
 | Follow-up branches | Select part of an answer and continue with contextual, branching follow-up questions |
 | History | Save, browse, and reopen previous queries |
 | Custom modes | Enable or disable modes and edit their system prompts |
+| First-run guidance | Open API settings automatically and show setup steps when no API key is configured |
 | Multiple providers | Use DeepSeek, OpenAI, SiliconFlow, or another OpenAI-compatible endpoint |
 
 ## Requirements

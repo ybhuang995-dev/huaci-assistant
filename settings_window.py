@@ -126,6 +126,7 @@ class SettingsApi:
             "customModes": custom_modes,
             "allModes": all_modes,
             "filters": dict(FILTERS_ENABLED),
+            "hasApiKey": bool(Config.DEEPSEEK_API_KEY),
         }
 
     def save(self, data: dict) -> None:

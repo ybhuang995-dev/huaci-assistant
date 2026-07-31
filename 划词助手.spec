@@ -25,6 +25,7 @@ a = Analysis(
         'markdown.extensions.toc',
         'dotenv',
         'certifi',
+        'history',
     ],
     hookspath=[],
     hooksconfig={},

@@ -464,6 +464,56 @@
     color: var(--hover);
   }
 
+  /* ── 首次使用引导 ── */
+  .onboarding-banner {
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+    border: 1.5px solid var(--accent);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 20px;
+  }
+  .onboarding-banner strong {
+    font-size: 13px;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 12px;
+  }
+  .onboarding-banner .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .onboarding-banner .step {
+    font-size: 12px;
+    color: var(--text);
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    line-height: 1.5;
+  }
+  .onboarding-banner .step span {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .onboarding-banner a {
+    font-size: 12px;
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .onboarding-banner a:hover {
+    text-decoration: underline;
+  }
+
   /* ── 历史记录列表 ── */
   .history-card {
     background: var(--surface);
@@ -705,6 +755,19 @@
     <div class="panel" id="panel-api">
       <h2>API 配置</h2>
       <p class="desc">配置大模型 API 连接参数。支持 OpenAI 兼容接口。</p>
+
+      <!-- 首次使用引导横幅（无 API Key 时显示） -->
+      <div id="onboarding-banner" class="onboarding-banner" style="display:none;">
+        <strong>👋 欢迎！只需 3 步即可开始使用</strong>
+        <div class="steps">
+          <div class="step"><span>1</span> 选择 API 提供商（推荐 DeepSeek，免费注册）</div>
+          <div class="step"><span>2</span> 填入你的 API Key → 点击「🔄 测试连接」验证</div>
+          <div class="step"><span>3</span> 点击「💾 保存设置」→ 复制任意文字试试！</div>
+        </div>
+        <a href="https://platform.deepseek.com/api_keys" target="_blank">
+          🔗 获取 DeepSeek API Key（新用户免费 500 万 tokens）→
+        </a>
+      </div>
 
       <div class="form-group">
         <label>API Provider</label>
@@ -1596,6 +1659,7 @@ document.getElementById('btn-save').addEventListener('click', function() {
   var data = collectFormData();
   api.save(data).then(function() {
     showToast('✅ 设置已保存', 'success');
+    dismissOnboarding();
     setTimeout(function() { closeWindow(); }, 600);
   }).catch(function(e) {
     showToast('❌ 保存失败: ' + e, 'error');
@@ -1631,6 +1695,7 @@ document.getElementById('btn-test').addEventListener('click', function() {
     if (result.success) {
       okEl.style.display = 'inline';
       failEl.style.display = 'none';
+      dismissOnboarding();
     } else {
       failEl.style.display = 'inline';
       failEl.textContent = '❌ ' + result.message;
@@ -1678,6 +1743,36 @@ document.getElementById('btn-reset-prompts').addEventListener('click', function(
 });
 
 // ══════════════════════════════════════════════════════════════
+// 首次使用引导
+// ══════════════════════════════════════════════════════════════
+
+function checkOnboarding(config) {
+  var banner = document.getElementById('onboarding-banner');
+  if (!banner) return;
+
+  // 已有 API Key → 不显示引导
+  if (config.hasApiKey || (config.apiKey && config.apiKey.length > 10 && config.apiKey.indexOf('xxx') === -1)) {
+    banner.style.display = 'none';
+    return;
+  }
+
+  // 无 Key → 显示引导 + 自动跳转到 API 配置页
+  banner.style.display = 'block';
+  switchToPanel('api');
+}
+
+function dismissOnboarding() {
+  var banner = document.getElementById('onboarding-banner');
+  if (banner) banner.style.display = 'none';
+}
+
+// 辅助：编程式切换面板（模拟点击导航项）
+function switchToPanel(panelName) {
+  var navItem = document.querySelector('[data-panel="' + panelName + '"]');
+  if (navItem) navItem.click();
+}
+
+// ══════════════════════════════════════════════════════════════
 // 页面初始化 — 等待 pywebview 注入 JS bridge 后再拉取配置
 // ══════════════════════════════════════════════════════════════
 
@@ -1698,6 +1793,7 @@ function _initBridge() {
   // 从 Python 拉取当前配置回填表单
   api.getConfig().then(function(config) {
     populateForm(config);
+    checkOnboarding(config);
   }).catch(function(e) {
     console.error('加载配置失败:', e);
   });

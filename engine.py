@@ -2,7 +2,7 @@
 LLM 引擎模块
 -----------
 引擎抽象 + DeepSeek 实现。
-所有模式（翻译/提问/润色/总结）共用同一调用逻辑，差异只在 system prompt。
+所有模式（翻译/提问/代码/总结）共用同一调用逻辑，差异只在 system prompt。
 支持 SSE 流式调用。
 
 v2：用标准库 urllib 替代 httpx，避免 httpcore + OpenSSL 1.1.1n 的 TLS 兼容问题。
@@ -59,6 +59,14 @@ class DeepSeekEngine:
         mode_config = MODES.get(mode, MODES["ask"])
         system_prompt = mode_config["system_prompt"]
 
+        # 注入用户当前关注方向（如有）
+        if Config.USER_DIRECTION.strip():
+            system_prompt = (
+                f"{system_prompt}\n\n"
+                f"[用户当前关注方向]\n{Config.USER_DIRECTION.strip()}\n\n"
+                f"请在回答时优先考虑上述方向，用更贴合用户当前需求的方式组织回答。"
+            )
+
         if not self.api_key:
             yield (
                 "❌ 未配置 API Key\n\n"
@@ -90,6 +98,14 @@ class DeepSeekEngine:
         mode_config = MODES.get(mode, MODES["ask"])
         mode_label = mode_config["label"]
         system_prompt = mode_config["system_prompt"]
+
+        # 注入用户当前关注方向（如有）
+        if Config.USER_DIRECTION.strip():
+            system_prompt = (
+                f"{system_prompt}\n\n"
+                f"[用户当前关注方向]\n{Config.USER_DIRECTION.strip()}\n\n"
+                f"请在回答时优先考虑上述方向，用更贴合用户当前需求的方式组织回答。"
+            )
 
         if not self.api_key:
             yield "❌ 未配置 API Key"

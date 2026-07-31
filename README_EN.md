@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  A system-wide translation and AI assistant for Windows. Copy text in any application to translate, explain, polish, summarize, or look it up in a floating window.
+  A system-wide translation and AI assistant for Windows. Copy text in any application to translate, explain, review code, summarize, or look it up in a floating window.
 </p>
 
 <p align="center">

@@ -2,7 +2,7 @@
 悬浮窗 UI 模块
 -------------
 借鉴 OpenAI Translator 的设计：
-- 模式标签栏（翻译 | 提问 | 润色 | 总结），点击切换模式
+- 模式标签栏（翻译 | 提问 | 代码 | 总结），点击切换模式
 - 原文预览区
 - 结果显示区（滚动）
 - 底部操作栏（复制 / 重试 / 关闭）
@@ -23,7 +23,7 @@ C = {
     "text": "#1f2937",          # 正文
     "subtext": "#9ca3af",       # 次要文字
     "accent": "#3b82f6",        # 蓝 — 翻译
-    "accent_green": "#10b981",  # 绿 — 润色
+    "accent_green": "#10b981",  # 绿 — 代码
     "accent_purple": "#8b5cf6", # 紫 — 提问
     "accent_yellow": "#f59e0b", # 黄 — 总结
     "hover": "#ef4444",         # 关闭按钮 hover
@@ -37,10 +37,30 @@ C = {
 MODE_ACCENT = {
     "translate": C["accent"],
     "ask": C["accent_purple"],
-    "polish": C["accent_green"],
+    "code": C["accent_green"],
     "summarize": C["accent_yellow"],
     "dict": "#ec4899",  # 粉色
 }
+
+# 自定义模式调色板（轮转使用）
+_CUSTOM_ACCENT_PALETTE = [
+    "#f97316",  # orange
+    "#06b6d4",  # cyan
+    "#84cc16",  # lime
+    "#a855f7",  # violet
+    "#f43f5e",  # rose
+    "#14b8a6",  # teal
+    "#6366f1",  # indigo
+    "#eab308",  # amber
+]
+
+
+def _get_mode_accent(mode_key: str) -> str:
+    """返回模式的强调色，内置模式用预定义色，自定义模式从调色板轮转。"""
+    if mode_key in MODE_ACCENT:
+        return MODE_ACCENT[mode_key]
+    idx = hash(mode_key) % len(_CUSTOM_ACCENT_PALETTE)
+    return _CUSTOM_ACCENT_PALETTE[idx]
 
 
 class FloatingWindow:
@@ -49,7 +69,7 @@ class FloatingWindow:
 
     窗口结构：
     ┌─────────────────────────────────┐
-    │ [翻译] [提问] [润色] [总结]  [✕]│  ← 模式标签栏
+    │ [翻译] [提问] [代码] [总结]  [✕]│  ← 模式标签栏
     ├─────────────────────────────────┤
     │ 原文：Hello world...            │  ← 原文预览（单行）
     ├─────────────────────────────────┤
@@ -92,10 +112,8 @@ class FloatingWindow:
 
         # 分支树侧边栏
         self._sidebar_visible = False
-        self._sidebar_mode = "tree"   # "tree" | "history"
         self._sidebar_canvas: tk.Canvas | None = None
         self._collapsed_nodes: set = set()  # 已折叠的节点 ID
-        self._history_btn: tk.Label | None = None  # 历史按钮引用
 
         # 追问输入框
         self._input_entry: tk.Entry | None = None
@@ -158,9 +176,6 @@ class FloatingWindow:
         self._build_input_bar()       # BOTTOM（在操作栏上方）
         self._build_result_area()     # TOP expand 后 pack，吃剩余空间
 
-        # 根据配置刷新按钮可见性
-        self.refresh_history_btn()
-
         # 快捷键
         self.window.bind("<Escape>", lambda e: self.hide())
         self.window.bind("<Control-Return>", lambda e: self._copy_result())
@@ -208,23 +223,41 @@ class FloatingWindow:
         self.window.geometry(f"{w}x{h}+{x}+{y}")
 
     def refresh_tabs(self) -> None:
-        """热刷新标签栏（MODE_ENABLED 变更后调用）"""
+        """热刷新标签栏：响应 MODES / MODE_ENABLED 变更（含自定义模式增删）"""
         if not self._tab_widgets:
             return
+
+        # 移除已不存在于 MODES 中的 tab widget
+        for mk in list(self._tab_widgets.keys()):
+            if mk not in MODES:
+                self._tab_widgets[mk].destroy()
+                del self._tab_widgets[mk]
+
+        # 为新出现的模式创建 widget
+        for mk in MODES:
+            if mk not in self._tab_widgets:
+                self._tab_widgets[mk] = self._create_tab_widget(mk)
+
         # 全部撤销
         for tab in self._tab_widgets.values():
             tab.pack_forget()
+
         # 按 MODES 顺序重新 pack 已启用的
         for mode_key in MODES:
             tab = self._tab_widgets.get(mode_key)
             if tab is not None and MODE_ENABLED.get(mode_key, True):
                 tab.pack(side=tk.LEFT, padx=(4, 0), pady=4)
-        # 如果当前模式被禁用，切到第一个可用模式
-        if not MODE_ENABLED.get(self.current_mode, True):
+
+        # 如果当前模式被禁用/删除，切到第一个可用模式
+        if (self.current_mode not in MODES or
+                not MODE_ENABLED.get(self.current_mode, True)):
             for mk in MODES:
                 if MODE_ENABLED.get(mk, True):
                     self.current_mode = mk
                     break
+            else:
+                self.current_mode = next(iter(MODES), "translate")
+
         self._highlight_active_tab()
 
     def set_route_hint(self, text: str) -> None:
@@ -257,7 +290,6 @@ class FloatingWindow:
             self.result_area = None
             self._sidebar_canvas = None
             self._sidebar_btn = None
-            self._history_btn = None
             self._sidebar_visible = False
             self._collapsed_nodes = set()
             self._active_node_id = None
@@ -266,29 +298,34 @@ class FloatingWindow:
 
     # ── 标签栏 ──────────────────────────────────────────
 
+    def _create_tab_widget(self, mode_key: str) -> tk.Label:
+        """创建一个模式标签 widget（未 pack）。"""
+        label_text = MODES[mode_key]["label"]
+        tab = tk.Label(
+            self._tab_bar, text=label_text,
+            bg=C["tab_inactive"], fg=C["subtext"],
+            font=(FONT, 10), padx=12, pady=6,
+            cursor="hand2",
+        )
+        tab.bind("<Button-1>", lambda e, m=mode_key: self._switch_mode(m))
+        tab.bind("<Enter>", lambda e, t=tab: t.configure(bg=C["tab_active"], fg=C["text"]))
+        tab.bind("<Leave>", lambda e, t=tab, m=mode_key: self._restyle_tab(t, m))
+        return tab
+
     def _build_tab_bar(self) -> None:
-        """构建模式标签栏：[翻译] [提问] [润色] [总结] [✕]"""
+        """构建模式标签栏：[翻译] [提问] [代码] [总结] [✕]"""
         bar = tk.Frame(self._inner, bg=C["surface"], height=36)
         bar.pack(fill=tk.X, side=tk.TOP)
         bar.pack_propagate(False)
+        self._tab_bar = bar  # 保存引用，供 _create_tab_widget 使用
 
         self._tab_widgets = {}
 
         for mode_key in MODES:
             if not MODE_ENABLED.get(mode_key, True):
                 continue
-            label_text = MODES[mode_key]["label"]
-            tab = tk.Label(
-                bar, text=label_text,
-                bg=C["tab_inactive"], fg=C["subtext"],
-                font=(FONT, 10), padx=12, pady=6,
-                cursor="hand2",
-            )
+            tab = self._create_tab_widget(mode_key)
             tab.pack(side=tk.LEFT, padx=(4, 0), pady=4)
-            tab.bind("<Button-1>", lambda e, m=mode_key: self._switch_mode(m))
-            # 悬停效果
-            tab.bind("<Enter>", lambda e, t=tab: t.configure(bg=C["tab_active"], fg=C["text"]))
-            tab.bind("<Leave>", lambda e, t=tab, m=mode_key: self._restyle_tab(t, m))
             self._tab_widgets[mode_key] = tab
 
         # 齿轮按钮（设置）
@@ -348,7 +385,7 @@ class FloatingWindow:
     def _restyle_tab(self, tab: tk.Label, mode_key: str) -> None:
         """根据模式状态设置标签样式"""
         if mode_key == self.current_mode:
-            accent = MODE_ACCENT.get(mode_key, C["accent"])
+            accent = _get_mode_accent(mode_key)
             tab.configure(bg=C["tab_active"], fg=accent)
         else:
             tab.configure(bg=C["tab_inactive"], fg=C["subtext"])
@@ -448,9 +485,6 @@ class FloatingWindow:
         # 分支树侧边栏
         self._sidebar_btn = _make_btn("📂 分支树", self._toggle_sidebar)
 
-        # 历史记录按钮（由 Config.SAVE_HISTORY 控制可见性，不在这里 pack）
-        self._history_btn = _make_btn("📜 历史", self._toggle_history_sidebar, pack=False)
-
         # 重试
         _make_btn("🔄 重试", self._retry)
 
@@ -507,6 +541,7 @@ class FloatingWindow:
             "parent_id": parent_id,
             "depth": depth,
             "is_last": True,
+            "history_id": None,   # DB row id，保存后由 main.py 回填
         }
         self._tree_nodes.append(node)
         self._active_node_id = node_id  # 新节点自动成为活跃节点
@@ -628,35 +663,15 @@ class FloatingWindow:
 
     def _toggle_sidebar(self) -> None:
         """切换侧边栏显示/隐藏（分支树模式）"""
-        if self._sidebar_visible and self._sidebar_mode == "tree":
+        if self._sidebar_visible:
             self._sidebar_frame.pack_forget()
             self._sidebar_visible = False
             self._update_sidebar_btn()
-            self._update_history_btn_text()
             return
 
-        # 确保侧边栏可见，切换到分支树模式
-        self._sidebar_mode = "tree"
         self._open_sidebar()
         self._render_sidebar()
         self._update_sidebar_btn()
-        self._update_history_btn_text()
-
-    def _toggle_history_sidebar(self) -> None:
-        """切换历史记录侧边栏"""
-        if self._sidebar_visible and self._sidebar_mode == "history":
-            self._sidebar_frame.pack_forget()
-            self._sidebar_visible = False
-            self._update_sidebar_btn()
-            self._update_history_btn_text()
-            return
-
-        # 确保侧边栏可见，切换到历史模式
-        self._sidebar_mode = "history"
-        self._open_sidebar()
-        self._render_history_sidebar()
-        self._update_sidebar_btn()
-        self._update_history_btn_text()
 
     def _open_sidebar(self) -> None:
         """展开侧边栏 frame"""
@@ -673,23 +688,8 @@ class FloatingWindow:
         """更新侧边栏按钮文字"""
         if hasattr(self, "_sidebar_btn") and self._sidebar_btn is not None:
             try:
-                if self._sidebar_visible and self._sidebar_mode == "tree":
-                    text = "📂 关闭分支"
-                else:
-                    text = "📂 分支树"
+                text = "📂 关闭分支" if self._sidebar_visible else "📂 分支树"
                 self._sidebar_btn.configure(text=text)
-            except tk.TclError:
-                pass
-
-    def _update_history_btn_text(self) -> None:
-        """更新历史按钮文字"""
-        if hasattr(self, "_history_btn") and self._history_btn is not None:
-            try:
-                if self._sidebar_visible and self._sidebar_mode == "history":
-                    text = "📜 关闭历史"
-                else:
-                    text = "📜 历史"
-                self._history_btn.configure(text=text)
             except tk.TclError:
                 pass
 
@@ -805,195 +805,6 @@ class FloatingWindow:
         self._render_tree()  # 内部会刷新 sidebar
 
     # ── 历史记录侧边栏 ──────────────────────────────────
-
-    def _render_history_sidebar(self) -> None:
-        """渲染历史记录列表到侧边栏 Canvas"""
-        import history as _hist
-
-        if self._sidebar_canvas is None:
-            return
-        try:
-            self._sidebar_canvas.delete("all")
-
-            records = _hist.get_recent(limit=100)
-
-            y = 8
-
-            # ── 顶部：清除全部按钮（无论有无记录都显示） ──
-            self._sidebar_canvas.create_rectangle(
-                4, y, 212, y + 28, fill=C["bg"], outline=C["border"],
-                tags=("side_item",),
-            )
-            clear_tag = "hist_clear_all"
-            self._sidebar_canvas.create_text(
-                108, y + 14, text="🗑 清除全部历史", anchor="center",
-                fill=C["hover"], font=(FONT, 9, "bold"),
-                tags=(clear_tag, "side_item"),
-            )
-            self._sidebar_canvas.tag_bind(
-                clear_tag, "<Button-1>",
-                lambda e: self._delete_all_history())
-            self._sidebar_canvas.tag_bind(
-                clear_tag, "<Enter>",
-                lambda e: self._sidebar_canvas.configure(cursor="hand2"))
-            self._sidebar_canvas.tag_bind(
-                clear_tag, "<Leave>",
-                lambda e: self._sidebar_canvas.configure(cursor=""))
-            y += 38
-
-            if not records:
-                self._sidebar_canvas.create_text(
-                    108, y + 20, text="(暂无历史记录)", anchor="center",
-                    fill=C["subtext"], font=(FONT, 10),
-                )
-                return
-
-            for rec in records:
-                rid = rec["id"]
-                ts = rec["timestamp"]
-                try:
-                    dt = ts.replace("T", " ")[:16]
-                except Exception:
-                    dt = ts[:16]
-                mode_label = rec.get("mode_label", rec["mode"])
-                text_preview = rec["text"].replace("\n", " ").strip()
-                if len(text_preview) > 28:
-                    text_preview = text_preview[:28] + "…"
-
-                # 模式色圆点 + 时间
-                accent = MODE_ACCENT.get(rec["mode"], C["accent"])
-                self._sidebar_canvas.create_oval(
-                    8, y + 4, 14, y + 10, fill=accent, outline="",
-                    tags=("side_item",),
-                )
-                self._sidebar_canvas.create_text(
-                    20, y, text=f"{dt}  {mode_label}", anchor="nw",
-                    fill=C["subtext"], font=(FONT, 8),
-                    tags=("side_item",),
-                )
-
-                # ✕ 删除按钮
-                del_tag = f"del_{rid}"
-                self._sidebar_canvas.create_text(
-                    208, y, text="✕", anchor="ne",
-                    fill=C["subtext"], font=(FONT, 10),
-                    tags=(del_tag, "side_item"),
-                )
-                self._sidebar_canvas.tag_bind(
-                    del_tag, "<Button-1>",
-                    lambda e, rid=rid: self._delete_history(rid))
-                self._sidebar_canvas.tag_bind(
-                    del_tag, "<Enter>",
-                    lambda e: self._sidebar_canvas.configure(cursor="hand2"))
-                self._sidebar_canvas.tag_bind(
-                    del_tag, "<Leave>",
-                    lambda e: self._sidebar_canvas.configure(cursor=""))
-
-                y += 16
-
-                # 原文预览（点击加载）
-                tag = f"hist_{rid}"
-                self._sidebar_canvas.create_text(
-                    20, y, text=text_preview, anchor="nw",
-                    fill=C["text"], font=(FONT, 9),
-                    tags=(tag, "side_item"),
-                )
-                self._sidebar_canvas.tag_bind(
-                    tag, "<Button-1>",
-                    lambda e, rid=rid: self._load_history(rid))
-                self._sidebar_canvas.tag_bind(
-                    tag, "<Enter>",
-                    lambda e: self._sidebar_canvas.configure(cursor="hand2"))
-                self._sidebar_canvas.tag_bind(
-                    tag, "<Leave>",
-                    lambda e: self._sidebar_canvas.configure(cursor=""))
-
-                y += 22
-
-                # 分隔线
-                self._sidebar_canvas.create_line(
-                    10, y, 210, y, fill=C["border"],
-                    tags=("side_item",),
-                )
-                y += 8
-
-            bbox = self._sidebar_canvas.bbox("all")
-            if bbox:
-                self._sidebar_canvas.configure(
-                    scrollregion=(0, 0, 220, bbox[3] + 8))
-
-        except tk.TclError:
-            pass
-
-    def _load_history(self, record_id: int) -> None:
-        """加载一条历史记录到主结果区（只读回放）"""
-        import history as _hist
-
-        chain = _hist.get_chain(record_id)
-        if not chain:
-            return
-
-        # 清空当前树，用历史链填充
-        self._tree_nodes = []
-        self._next_node_id = 0
-        self._collapsed_nodes.clear()
-
-        # 逐条插入树
-        node_id_map = {}  # db id → tree node id
-        for rec in chain:
-            parent_tree_id = None
-            if rec["parent_id"] is not None:
-                parent_tree_id = node_id_map.get(rec["parent_id"])
-
-            node = self._add_node(
-                "query", rec["text"], rec["result"], rec["mode"],
-                parent_tree_id,
-            )
-            node_id_map[rec["id"]] = node["id"]
-
-        # 设置活跃节点为链末尾
-        if self._tree_nodes:
-            self._active_node_id = self._tree_nodes[-1]["id"]
-
-        self._render_tree()
-
-    def _delete_history(self, record_id: int) -> None:
-        """删除单条历史记录（弹确认框）"""
-        if not tk.messagebox.askyesno(
-            "确认删除", "确定要删除这条历史记录吗？\n追问子节点也会一起删除。",
-            parent=self.window,
-        ):
-            return
-        import history as _hist
-        _hist.delete_query(record_id)
-        # 如果当前侧边栏在历史模式，刷新列表
-        if self._sidebar_visible and self._sidebar_mode == "history":
-            self._render_history_sidebar()
-
-    def _delete_all_history(self) -> None:
-        """清除全部历史记录（弹确认框）"""
-        if not tk.messagebox.askyesno(
-            "确认清除", "确定要清除全部历史记录吗？\n此操作不可撤销。",
-            parent=self.window,
-        ):
-            return
-        import history as _hist
-        _hist.delete_all()
-        # 如果当前侧边栏在历史模式，刷新列表
-        if self._sidebar_visible and self._sidebar_mode == "history":
-            self._render_history_sidebar()
-
-    def refresh_history_btn(self) -> None:
-        """根据 Config.SAVE_HISTORY 显示/隐藏历史按钮"""
-        if self._history_btn is None:
-            return
-        try:
-            if Config.SAVE_HISTORY:
-                self._history_btn.pack(side=tk.LEFT, padx=2)
-            else:
-                self._history_btn.pack_forget()
-        except tk.TclError:
-            pass
 
     # ── 追问输入栏 ──────────────────────────────────────
 
@@ -1135,6 +946,73 @@ class FloatingWindow:
             if n["id"] == node_id:
                 return n
         return None
+
+    # ── 历史持久化 ──────────────────────────────────────
+
+    def save_active_node_history(self, text: str, result: str,
+                                  mode: str) -> int | None:
+        """将活跃节点保存到历史 DB，正确处理父子关系。
+
+        由 main.py 的 Worker 线程调度到主线程执行。
+        返回 DB row_id，失败返回 None。
+        """
+        import history as _hist
+
+        if self._active_node_id is None:
+            return None
+
+        active = self._get_node(self._active_node_id)
+        if active is None:
+            return None
+
+        # 查找父节点的 DB history_id（用于正确链接追问链）
+        parent_history_id = None
+        if active.get("parent_id") is not None:
+            parent_node = self._get_node(active["parent_id"])
+            if parent_node:
+                parent_history_id = parent_node.get("history_id")
+
+        row_id = _hist.save(text, result, mode, parent_id=parent_history_id)
+
+        if row_id is not None:
+            active["history_id"] = row_id
+
+        return row_id
+
+    def load_tree_chain(self, chain: list[dict]) -> None:
+        """从 DB 加载一条完整追问链，替换当前对话树。
+
+        chain 来自 history.get_chain()，按时间升序排列。
+        加载后窗口自动弹出，用户可以继续追问。
+        """
+        if not chain:
+            return
+
+        self.hide()
+
+        # 用链的根节点重建窗口
+        root = chain[0]
+        self.show(root["text"], root["result"], mode=root["mode"])
+
+        # 重建所有子节点，保留 DB id 映射以便后续追问正确链接
+        node_id_map: dict[int, int] = {root["id"]: 0}  # db_id → tree node_id
+        self._tree_nodes[0]["history_id"] = root["id"]
+
+        for rec in chain[1:]:
+            db_parent_id = rec.get("parent_id")
+            parent_tree_id = node_id_map.get(db_parent_id) if db_parent_id else None
+            node = self._add_node(
+                "follow_up", rec["text"], rec["result"], rec["mode"],
+                parent_tree_id,
+            )
+            node["history_id"] = rec["id"]
+            node_id_map[rec["id"]] = node["id"]
+
+        # 活跃节点设为链末尾
+        if self._tree_nodes:
+            self._active_node_id = self._tree_nodes[-1]["id"]
+
+        self._render_tree()
 
     # ── 拖拽 ────────────────────────────────────────────
 

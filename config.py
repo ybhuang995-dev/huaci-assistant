@@ -47,6 +47,10 @@ class Config:
     SAVE_HISTORY = os.getenv("SAVE_HISTORY", "false").lower() == "true"
     HOTKEY_PAUSE = os.getenv("HOTKEY_PAUSE", "ctrl+shift+p")
     PROVIDER = os.getenv("PROVIDER", "DeepSeek")
+    HISTORY_MIN_NODES = int(os.getenv("HISTORY_MIN_NODES", "3"))
+
+    # ── 用户方向（可选）───────────────────────────────
+    USER_DIRECTION = os.getenv("USER_DIRECTION", "")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -62,6 +66,7 @@ MODES = {
             "保持原文的格式、语气和风格。"
             "只返回翻译结果，不要添加任何解释。"
         ),
+        "classifier_desc": "- translate: 非中文的外语文本（英文/日文/韩文等），需要翻译成中文",
     },
     "ask": {
         "label": "提问",
@@ -69,21 +74,28 @@ MODES = {
             "你是一个知识渊博的 AI 助手。根据用户选中的文本提供清晰、准确的回答。\n"
             "- 如果文本是一个问题，直接回答。\n"
             "- 如果文本是一个概念或术语，给出简明解释。\n"
-            "- 如果文本是一段代码，解释代码的功能、逻辑和关键实现细节，"
-            "指出潜在问题或可改进之处。\n"
             "- 如果文本是一段内容，给出分析或总结。\n"
             "请用中文回答。"
         ),
+        "classifier_desc": "- ask: 中文问题、概念、术语，需要解释或回答",
     },
-    "polish": {
-        "label": "润色",
+    "code": {
+        "label": "代码",
         "system_prompt": (
-            "你是一个文字润色助手。请优化以下文字的表达，使其更加流畅、优美。\n"
-            "- 纠正语法错误和错别字。\n"
-            "- 保持原意不变。\n"
-            "- 保持原文的语言（中文保持中文，英文保持英文）。\n"
-            "只返回润色后的文本。"
+            "你是一个专业的代码助手。请对用户提供的代码进行全面分析。\n\n"
+            "**分析要点：**\n"
+            "- 简要说明代码的整体功能和用途\n"
+            "- 逐段解释核心逻辑和关键实现细节\n"
+            "- 指出潜在的 bug、边界条件问题或安全隐患\n"
+            "- 提出性能优化或代码结构改进建议\n"
+            "- 如果用户明确要求，可以重构或改写代码\n\n"
+            "**格式要求：**\n"
+            "- 使用 Markdown 排版，代码块标记正确的语言类型\n"
+            "- 对比代码用 diff 格式标注变更\n"
+            "- 复杂度较高的逻辑可配图表或伪代码辅助说明\n\n"
+            "请用中文回答，代码标识符和注释保持原文语言。"
         ),
+        "classifier_desc": "- code: 代码片段（任何编程语言），需要解释、审查、调试或优化",
     },
     "summarize": {
         "label": "总结",
@@ -94,6 +106,7 @@ MODES = {
             "- 保留原文中的重要数据和专有名词。\n"
             "请用中文输出。"
         ),
+        "classifier_desc": "- summarize: 长文本（>200字）的要点提炼",
     },
     "dict": {
         "label": "词典",
@@ -107,22 +120,20 @@ MODES = {
             "- 如有常见搭配或同义词，简要列出\n\n"
             "保持简洁清晰，适合快速查阅。"
         ),
+        "classifier_desc": "- dict: 单个英文单词的词典释义（发音+词性+例句）",
     },
 }
 
 # ── 保存出厂默认值（供设置面板"恢复默认"使用）─────────
 # 必须在 .env 覆盖之前保存，否则恢复默认拿到的是已修改的值
 
-# ── 自动路由分类器 Prompt ─────────────────────────────
-
-# ── 各模式在分类器 prompt 中的描述 ─────────────────────
-
-_MODE_CLASSIFIER_DESC = {
-    "translate": "- translate: 非中文的外语文本（英文/日文/韩文等），需要翻译成中文",
-    "ask":       "- ask: 中文问题、概念、术语、代码，需要解释或回答",
-    "polish":    "- polish: 中文文本的语法和表达优化",
-    "summarize": "- summarize: 长文本（>200字）的要点提炼",
-    "dict":      "- dict: 单个英文单词的词典释义（发音+词性+例句）",
+_FACTORY_MODE_PROMPTS = {mk: MODES[mk]["system_prompt"] for mk in MODES}
+_FACTORY_MODE_ENABLED = {mk: True for mk in MODES}
+_FACTORY_MODE_CLASSIFIER_DESCS = {mk: MODES[mk]["classifier_desc"] for mk in MODES}
+_FACTORY_CUSTOM_MODES: list = []
+_FACTORY_FILTERS = {
+    "too_short": True, "numbers": True, "paths": True,
+    "url": True, "filename": True,
 }
 
 
@@ -134,12 +145,15 @@ def build_classifier_prompt() -> str:
     """
     enabled = {mk for mk in MODES if MODE_ENABLED.get(mk, True)}
 
+    def _get_desc(mk: str) -> str:
+        return MODES[mk].get("classifier_desc", f"- {mk}: {MODES[mk].get('label', mk)}")
+
     lines: list[str] = []
     lines.append("你是一个文本分类器。分析用户文本，只返回 {\"mode\": \"<key>\"}。\n")
     lines.append("可用模式：")
     for mk in MODES:
-        if mk in enabled and mk in _MODE_CLASSIFIER_DESC:
-            lines.append(_MODE_CLASSIFIER_DESC[mk])
+        if mk in enabled:
+            lines.append(_get_desc(mk))
 
     lines.append("")
     lines.append("判断规则（按顺序，命中即停）：")
@@ -157,23 +171,31 @@ def build_classifier_prompt() -> str:
         idx += 1
 
     # 3. 中文文本子规则（只包含已启用模式）
-    cn_mode_order = ["ask", "summarize", "polish"]
+    cn_mode_order = ["ask", "summarize"]
     cn_enabled = [m for m in cn_mode_order if m in enabled]
     if cn_enabled:
         lines.append(f"{idx}. 中文文本 → 按以下子规则：")
         idx += 1
         sub_letter = ord('a')
         for m in cn_enabled:
-            desc = _MODE_CLASSIFIER_DESC[m].split(": ", 1)[1] if ": " in _MODE_CLASSIFIER_DESC[m] else _MODE_CLASSIFIER_DESC[m]
+            desc = _get_desc(m)
+            desc = desc.split(": ", 1)[1] if ": " in desc else desc
             lines.append(f"   {chr(sub_letter)}. {desc} → {m}")
             sub_letter += 1
         # 兜底：以上都不符合 → 第一个启用的中文模式
         fallback_cn = cn_enabled[0]
         lines.append(f"   {chr(sub_letter)}. 以上都不符合 → {fallback_cn}")
 
-    # 4. 代码片段 → ask
-    if "ask" in enabled:
-        lines.append(f"{idx}. 代码片段（任何编程语言）→ ask")
+    # 4. 代码片段 → code
+    if "code" in enabled:
+        lines.append(f"{idx}. 代码片段（任何编程语言）→ code")
+        idx += 1
+
+    # 5. 自定义模式：让 LLM 根据描述自行判断
+    _BUILTIN_KEYS = {"translate", "ask", "code", "summarize", "dict"}
+    custom_enabled = [mk for mk in enabled if mk not in _BUILTIN_KEYS]
+    if custom_enabled:
+        lines.append(f"{idx}. 如果以上规则都不匹配，根据「可用模式」中的描述选择最合适的模式。")
         idx += 1
 
     # 翻译警告（仅当 translate 启用时才有意义）
@@ -184,13 +206,6 @@ def build_classifier_prompt() -> str:
     lines.append("只返回 JSON，不要任何其他文字。")
     return "\n".join(lines)
 
-_FACTORY_MODE_PROMPTS = {mk: MODES[mk]["system_prompt"] for mk in MODES}
-_FACTORY_MODE_ENABLED = {mk: True for mk in MODES}
-_FACTORY_FILTERS = {
-    "too_short": True, "numbers": True, "paths": True,
-    "url": True, "filename": True,
-}
-
 # ── 从 .env 加载模式 Prompt 覆盖 ─────────────────────
 _MODE_PROMPTS_RAW = os.getenv("MODE_PROMPTS", "")
 if _MODE_PROMPTS_RAW:
@@ -199,6 +214,34 @@ if _MODE_PROMPTS_RAW:
         for mk, prompt in _overrides.items():
             if mk in MODES:
                 MODES[mk]["system_prompt"] = prompt
+    except (_json.JSONDecodeError, TypeError):
+        pass
+
+# ── 从 .env 加载分类器描述覆盖 ──────────────────────
+_CLASSIFIER_DESCS_RAW = os.getenv("MODE_CLASSIFIER_DESCS", "")
+if _CLASSIFIER_DESCS_RAW:
+    try:
+        descs = _json.loads(_CLASSIFIER_DESCS_RAW)
+        for mk, desc in descs.items():
+            if mk in MODES:
+                MODES[mk]["classifier_desc"] = desc
+    except (_json.JSONDecodeError, TypeError):
+        pass
+
+# ── 从 .env 加载自定义模式 ──────────────────────────
+_CUSTOM_MODES_RAW = os.getenv("CUSTOM_MODES", "")
+if _CUSTOM_MODES_RAW:
+    try:
+        custom_list = _json.loads(_CUSTOM_MODES_RAW)
+        for cm in custom_list:
+            key = cm.get("key", "")
+            if key and key not in MODES:
+                MODES[key] = {
+                    "label": cm.get("label", key),
+                    "system_prompt": cm.get("system_prompt", ""),
+                    "classifier_desc": cm.get("classifier_desc", ""),
+                    "custom": True,
+                }
     except (_json.JSONDecodeError, TypeError):
         pass
 
@@ -240,7 +283,7 @@ DEFAULT_MODE = os.getenv("DEFAULT_MODE", "translate")
 MODE_TITLES = {
     "translate": "翻译",
     "ask": "AI 问答",
-    "polish": "润色",
+    "code": "代码",
     "summarize": "总结",
 }
 

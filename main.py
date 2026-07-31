@@ -235,8 +235,10 @@ def _on_settings_saved(values: dict) -> None:
         Config.AUTO_START = values.get("autoStart", "false").lower() == "true"
         Config.AUTO_ROUTE = values.get("autoRoute", "false").lower() == "true"
         Config.SAVE_HISTORY = values.get("saveHistory", "false").lower() == "true"
+        Config.HISTORY_MIN_NODES = int(values.get("historyMinNodes", "3"))
         Config.HOTKEY_PAUSE = values.get("hotkeyPause", "ctrl+shift+p")
         Config.PROVIDER = values.get("provider", "DeepSeek")
+        Config.USER_DIRECTION = values.get("userDirection", "")
         # 开机自启：立即生效
         try:
             _autostart_set_enabled(Config.AUTO_START)
@@ -250,7 +252,17 @@ def _on_settings_saved(values: dict) -> None:
     engine.base_url = Config.DEEPSEEK_BASE_URL.rstrip("/")
     engine.model = Config.DEEPSEEK_MODEL
 
-    # 更新模式 Prompt（热生效，无需重启）
+    # ── 更新模式数据 ──
+
+    # 1. 更新分类器描述
+    classifier_descs = values.get("classifierDescs", {})
+    if classifier_descs:
+        for mk, desc in classifier_descs.items():
+            if mk in MODES:
+                MODES[mk]["classifier_desc"] = desc
+        _log(f"SETTINGS: updated classifier descs for {list(classifier_descs.keys())}")
+
+    # 2. 更新内置模式 Prompt（热生效，无需重启）
     mode_prompts = values.get("modePrompts", {})
     if mode_prompts:
         for mk, prompt in mode_prompts.items():
@@ -258,7 +270,26 @@ def _on_settings_saved(values: dict) -> None:
                 MODES[mk]["system_prompt"] = prompt
         _log(f"SETTINGS: updated prompts for {list(mode_prompts.keys())}")
 
-    # 更新模式启用状态
+    # 3. 处理自定义模式：移除旧的，添加新的
+    custom_modes_list = values.get("customModes", [])
+    # 移除所有现有的自定义模式
+    for mk in list(MODES.keys()):
+        if MODES[mk].get("custom"):
+            del MODES[mk]
+            _log(f"SETTINGS: removed custom mode [{mk}]")
+    # 添加当前的自定义模式
+    for cm in custom_modes_list:
+        key = cm.get("key", "")
+        if key and key not in MODES:
+            MODES[key] = {
+                "label": cm.get("label", key),
+                "system_prompt": cm.get("system_prompt", ""),
+                "classifier_desc": cm.get("classifier_desc", ""),
+                "custom": True,
+            }
+            _log(f"SETTINGS: added custom mode [{key}] label={MODES[key]['label']}")
+
+    # 4. 更新模式启用状态
     mode_enabled = values.get("modeEnabled", {})
     if mode_enabled:
         MODE_ENABLED.clear()
@@ -272,6 +303,11 @@ def _on_settings_saved(values: dict) -> None:
         FILTERS_ENABLED.update(filters)
         _log(f"SETTINGS: filters updated")
 
+    # 校验 DEFAULT_MODE 仍然有效（自定义模式被删除时可能失效）
+    if Config.DEFAULT_MODE not in MODES:
+        Config.DEFAULT_MODE = "translate"
+        _log(f"SETTINGS: defaultMode fell back to translate")
+
     # 更新模块级 DEFAULT_MODE
     import config as _cfg
     _cfg.DEFAULT_MODE = Config.DEFAULT_MODE
@@ -284,7 +320,6 @@ def _on_settings_saved(values: dict) -> None:
                 height=Config.WINDOW_HEIGHT,
             )
             _window_ref.refresh_tabs()
-            _window_ref.refresh_history_btn()
             _log(f"SETTINGS: window resized to {Config.WINDOW_WIDTH}x{Config.WINDOW_HEIGHT}")
         except Exception as e:
             _log(f"SETTINGS: resize failed: {e}")
@@ -353,12 +388,8 @@ def _worker(root: tk.Tk, window: FloatingWindow) -> None:
             # 写入历史记录（在主线程执行，避免 SQLite 线程问题）
             if Config.SAVE_HISTORY:
                 try:
-                    import history as _hist
-                    root.after(0, lambda: _hist.save(
-                        text, accumulated, mode,
-                        parent_id=None if not follow_up_data else None,
-                        root_id=None,
-                    ))
+                    root.after(0, lambda t=text, a=accumulated, m=mode:
+                        window.save_active_node_history(t, a, m))
                 except Exception as e:
                     _log(f"HISTORY: save error: {e}")
 
@@ -535,7 +566,9 @@ def main() -> None:
 
     # 设置面板
     global _settings_window
-    _settings_window = SettingsWindow(root, on_save=_on_settings_saved)
+    _settings_window = SettingsWindow(
+        root, on_save=_on_settings_saved,
+    )
 
     # ── 首次启动引导：无 API Key 时自动弹出设置面板 ──
     if not Config.DEEPSEEK_API_KEY:

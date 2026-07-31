@@ -359,6 +359,110 @@
   .panel::-webkit-scrollbar-track { background: transparent; }
   .panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
   .panel::-webkit-scrollbar-thumb:hover { background: var(--subtext); }
+
+  /* ── 模式卡片样式（动态渲染） ── */
+  .mode-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+    position: relative;
+  }
+  .mode-card .card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .mode-card .card-header .mode-badge-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .mode-card .card-header input.mode-label-input {
+    font-size: 13px; font-weight: 600;
+    border: 1px solid transparent;
+    background: transparent;
+    padding: 2px 4px;
+    border-radius: 4px;
+    color: var(--text);
+    font-family: var(--font);
+    width: 100px;
+  }
+  .mode-card .card-header input.mode-label-input:focus {
+    border-color: var(--accent);
+    background: var(--bg);
+    outline: none;
+  }
+  .mode-card .card-header .built-in-label {
+    font-size: 13px; font-weight: 600;
+    color: var(--text);
+  }
+  .mode-card .card-header input.mode-key-input {
+    font-size: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--subtext);
+    font-family: "Consolas", monospace;
+    width: 120px;
+  }
+  .mode-card .card-header input.mode-key-input:focus {
+    border-color: var(--accent);
+    outline: none;
+  }
+  .mode-card .card-header .key-hint {
+    font-size: 10px;
+    color: var(--subtext);
+    font-family: "Consolas", monospace;
+  }
+  .mode-card .card-body label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 3px;
+    margin-top: 10px;
+  }
+  .mode-card .card-body textarea {
+    width: 100%;
+    padding: 6px 8px;
+    font-size: 11px;
+    font-family: var(--font);
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    outline: none;
+    resize: vertical;
+    min-height: 52px;
+    line-height: 1.4;
+    transition: border-color 0.15s;
+  }
+  .mode-card .card-body textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(59,130,246,0.1);
+  }
+  .mode-card .btn-delete-mode {
+    position: absolute;
+    top: 10px; right: 10px;
+    width: 22px; height: 22px;
+    border: none;
+    background: none;
+    color: var(--subtext);
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .mode-card .btn-delete-mode:hover {
+    background: #fef2f2;
+    color: var(--hover);
+  }
 </style>
 </head>
 <body>
@@ -420,29 +524,15 @@
           <select data-key="defaultMode">
             <option value="translate" selected>翻译 — 中英互译</option>
             <option value="ask">提问 — AI 问答</option>
-            <option value="polish">润色 — 优化表达</option>
+            <option value="code">代码 — 解释/审查/优化</option>
             <option value="summarize">总结 — 提取要点</option>
             <option value="dict">词典 — 单词释义</option>
           </select>
         </div>
         <div class="form-group">
-          <label>激活模式 <span style="font-weight:400;color:var(--subtext)">（可关闭不需要的）</span></label>
+          <label>激活模式 <span style="font-weight:400;color:var(--subtext)">（最多 9 个）</span></label>
           <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px" id="mode-chips">
-            <label style="display:flex;align-items:center;gap:4px;font-size:11px;background:var(--surface);padding:4px 10px;border-radius:14px;cursor:pointer">
-              <input type="checkbox" checked data-mode="translate" style="accent-color:var(--accent)"> 翻译
-            </label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:11px;background:var(--surface);padding:4px 10px;border-radius:14px;cursor:pointer">
-              <input type="checkbox" checked data-mode="ask" style="accent-color:var(--accent-purple)"> 提问
-            </label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:11px;background:var(--surface);padding:4px 10px;border-radius:14px;cursor:pointer">
-              <input type="checkbox" checked data-mode="polish" style="accent-color:var(--accent-green)"> 润色
-            </label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:11px;background:var(--surface);padding:4px 10px;border-radius:14px;cursor:pointer">
-              <input type="checkbox" checked data-mode="summarize" style="accent-color:var(--accent-yellow)"> 总结
-            </label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:11px;background:var(--surface);padding:4px 10px;border-radius:14px;cursor:pointer">
-              <input type="checkbox" checked data-mode="dict" style="accent-color:#ec4899"> 词典
-            </label>
+            <!-- 由 renderAllModeChips() 动态渲染 -->
           </div>
         </div>
       </div>
@@ -455,6 +545,12 @@
           <option>PingFang SC</option>
           <option>Noto Sans SC</option>
         </select>
+      </div>
+
+      <div class="form-group">
+        <label>当前关注方向 <span style="font-weight:400;color:var(--subtext)">（可选）</span></label>
+        <div class="hint">填写你当前聚焦的方向或上下文，AI 会据此调整回答风格。例如："我正在学习 Rust 编程"、"准备前端面试"</div>
+        <textarea data-key="userDirection" rows="3" placeholder="例如：我正在学习 Rust 编程语言，请用初学者能理解的方式解释..."></textarea>
       </div>
 
       <div class="toggle-row">
@@ -482,7 +578,7 @@
       <div class="toggle-row">
         <div>
           <div class="toggle-label">🤖 AI 自动识别模式</div>
-          <div class="toggle-hint">用 LLM 分析文本内容，自动选择最合适的模式（翻译/提问/润色/总结/词典）</div>
+          <div class="toggle-hint">用 LLM 分析文本内容，自动选择最合适的模式（翻译/提问/代码/总结/词典）</div>
         </div>
         <label class="toggle-switch">
           <input type="checkbox" data-key="autoRoute">
@@ -559,82 +655,34 @@
     <!-- ════ 模式 Prompt ════ -->
     <div class="panel" id="panel-modes">
       <h2>模式 Prompt</h2>
-      <p class="desc">自定义每种模式的 System Prompt。留空则使用默认值。</p>
+      <p class="desc">自定义每种模式的 System Prompt 和自动识别描述。最多支持 9 个模式。</p>
 
-      <div class="form-group">
-        <label>
-          <span class="mode-badge" style="background:var(--accent)"></span>
-          翻译
-        </label>
-        <textarea rows="3" data-prompt="translate">你是一个专业的翻译助手。请将用户输入的文本翻译成中文。如果输入已经是中文，则翻译成英文。保持原文的格式、语气和风格。只返回翻译结果，不要添加任何解释。</textarea>
+      <div id="mode-cards-container">
+        <!-- 由 renderAllModeCards() 动态渲染 -->
       </div>
 
-      <div class="form-group">
-        <label>
-          <span class="mode-badge" style="background:var(--accent-purple)"></span>
-          提问
-        </label>
-        <textarea rows="3" data-prompt="ask">你是一个知识渊博的 AI 助手。根据用户选中的文本提供清晰、准确的回答。
-- 如果文本是一个问题，直接回答。
-- 如果文本是一个概念或术语，给出简明解释。
-- 如果文本是一段内容，给出分析或总结。
-请用中文回答。</textarea>
-      </div>
-
-      <div class="form-group">
-        <label>
-          <span class="mode-badge" style="background:var(--accent-green)"></span>
-          润色
-        </label>
-        <textarea rows="3" data-prompt="polish">你是一个文字润色助手。请优化以下文字的表达，使其更加流畅、优美。
-- 纠正语法错误和错别字。
-- 保持原意不变。
-- 保持原文的语言（中文保持中文，英文保持英文）。
-只返回润色后的文本。</textarea>
-      </div>
-
-      <div class="form-group">
-        <label>
-          <span class="mode-badge" style="background:var(--accent-yellow)"></span>
-          总结
-        </label>
-        <textarea rows="3" data-prompt="summarize">你是一个内容总结助手。请用简洁的要点总结以下内容的核心信息。
-- 用无序列表（- ）列出 3-5 个关键要点。
-- 每个要点不超过一句话。
-- 保留原文中的重要数据和专有名词。
-请用中文输出。</textarea>
-      </div>
-
-      <div class="form-group">
-        <label>
-          <span class="mode-badge" style="background:#ec4899"></span>
-          词典
-        </label>
-        <textarea rows="4" data-prompt="dict">你是一个专业的英语词典。请对用户输入的单词给出详细解释。
-
-**格式要求**（用 Markdown）：
-- 音标：英式 /ˈxxx/　美式 /ˈxxx/
-- 词性：名词 / 动词 / 形容词 等
-- 主要释义（含中文翻译），按常用度排列
-- 2-3 个英文例句（带中文翻译）
-- 如有常见搭配或同义词，简要列出
-
-保持简洁清晰，适合快速查阅。</textarea>
-      </div>
-
-      <div style="text-align:right">
-        <button id="btn-reset-prompts" style="
-          padding:6px 14px; font-size:11px; font-family:var(--font);
-          border:1px solid var(--border); color:var(--subtext);
-          background:var(--bg); border-radius:6px; cursor:pointer;
-        ">↺ 恢复默认</button>
+      <div style="display:flex; justify-content: space-between; align-items: center; margin-top: 12px;">
+        <button id="btn-add-mode" style="
+          padding: 6px 14px; font-size: 11px; font-family: var(--font);
+          border: 1px dashed var(--accent); color: var(--accent);
+          background: var(--bg); border-radius: 6px; cursor: pointer;
+        ">+ 添加模式</button>
+        <div>
+          <span id="mode-count-hint" style="font-size: 10px; color: var(--subtext);"></span>
+          <button id="btn-reset-prompts" style="
+            padding:6px 14px; font-size:11px; font-family:var(--font);
+            border:1px solid var(--border); color:var(--subtext);
+            background:var(--bg); border-radius:6px; cursor:pointer;
+            margin-left: 8px;
+          ">↺ 恢复默认</button>
+        </div>
       </div>
     </div>
 
     <!-- ════ 高级 ════ -->
     <div class="panel" id="panel-advanced">
       <h2>高级设置</h2>
-      <p class="desc">剪贴板监听和过滤相关配置</p>
+      <p class="desc">剪贴板监听、历史记录和过滤相关配置</p>
 
       <div class="form-group">
         <label>剪贴板轮询间隔 (ms)</label>
@@ -864,6 +912,33 @@ function collectFormData() {
     data.modePrompts[ta.dataset.prompt] = ta.value;
   });
 
+  // 分类器描述 → {translate: "- translate: ...", ...}
+  data.classifierDescs = {};
+  document.querySelectorAll('textarea[data-classifier-desc]').forEach(function(ta) {
+    data.classifierDescs[ta.dataset.classifierDesc] = ta.value;
+  });
+
+  // 自定义模式 → [{key, label, system_prompt, classifier_desc}, ...]
+  data.customModes = [];
+  document.querySelectorAll('.mode-card').forEach(function(card) {
+    var keyInput = card.querySelector('[data-custom-key]');
+    if (keyInput) {
+      var key = keyInput.value.trim();
+      var labelInput = card.querySelector('[data-custom-label]');
+      var label = labelInput ? labelInput.value.trim() : key;
+      if (key) {
+        var promptTa = card.querySelector('textarea[data-prompt]');
+        var descTa = card.querySelector('textarea[data-classifier-desc]');
+        data.customModes.push({
+          key: key,
+          label: label || key,
+          system_prompt: promptTa ? promptTa.value : '',
+          classifier_desc: descTa ? descTa.value : '',
+        });
+      }
+    }
+  });
+
   // 过滤规则 → {too_short: true, numbers: true, ...}
   data.filters = {};
   document.querySelectorAll('input[data-filter]').forEach(function(cb) {
@@ -885,30 +960,22 @@ function populateForm(config) {
         el.checked = !!config[key];
       } else if (el.type === 'range') {
         el.value = config[key];
-        document.getElementById('poll-val').textContent = '当前: ' + config[key] + 'ms';
+        var pollVal = document.getElementById('poll-val');
+        if (pollVal) pollVal.textContent = '当前: ' + config[key] + 'ms';
       } else {
         el.value = config[key];
       }
     }
   });
 
-  // 模式启用 checkbox
-  if (config.modeEnabled) {
-    document.querySelectorAll('#mode-chips input[data-mode]').forEach(function(cb) {
-      if (cb.dataset.mode in config.modeEnabled) {
-        cb.checked = !!config.modeEnabled[cb.dataset.mode];
-      }
-    });
-  }
+  // 动态渲染模式卡片和芯片
+  var allModes = config.allModes || [];
+  var modePrompts = config.modePrompts || {};
+  var classifierDescs = config.classifierDescs || {};
+  var modeEnabled = config.modeEnabled || {};
 
-  // 模式 Prompt textarea
-  if (config.modePrompts) {
-    document.querySelectorAll('textarea[data-prompt]').forEach(function(ta) {
-      if (ta.dataset.prompt in config.modePrompts) {
-        ta.value = config.modePrompts[ta.dataset.prompt];
-      }
-    });
-  }
+  renderAllModeCards(allModes, modePrompts, classifierDescs);
+  renderAllModeChips(allModes, modeEnabled);
 
   // 过滤规则 checkbox
   if (config.filters) {
@@ -919,6 +986,308 @@ function populateForm(config) {
     });
   }
 }
+
+// ══════════════════════════════════════════════════════════════
+// 动态渲染 — 模式卡片与芯片
+// ══════════════════════════════════════════════════════════════
+
+function escapeHtml(str) {
+  var div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+var _MODE_ACCENT_COLORS = {
+  'translate': 'var(--accent)',
+  'ask': 'var(--accent-purple)',
+  'code': 'var(--accent-green)',
+  'summarize': 'var(--accent-yellow)',
+  'dict': '#ec4899',
+};
+var _CUSTOM_PALETTE = ['#f97316','#06b6d4','#84cc16','#a855f7','#f43f5e','#14b8a6','#6366f1','#eab308'];
+
+function _getAccentColor(key) {
+  if (_MODE_ACCENT_COLORS[key]) return _MODE_ACCENT_COLORS[key];
+  var h = 0;
+  for (var i = 0; i < key.length; i++) { h = ((h << 5) - h) + key.charCodeAt(i); h |= 0; }
+  return _CUSTOM_PALETTE[Math.abs(h) % _CUSTOM_PALETTE.length];
+}
+
+function renderAllModeCards(allModes, modePrompts, classifierDescs) {
+  var container = document.getElementById('mode-cards-container');
+  container.innerHTML = '';
+
+  allModes.forEach(function(m) {
+    var key = m.key;
+    var label = m.label;
+    var isBuiltIn = m.isBuiltIn;
+    var prompt = modePrompts[key] || '';
+    var desc = classifierDescs[key] || '';
+    var color = _getAccentColor(key);
+
+    var card = document.createElement('div');
+    card.className = 'mode-card';
+    card.dataset.modeKey = key;
+
+    // Header
+    var header = document.createElement('div');
+    header.className = 'card-header';
+
+    var dot = document.createElement('span');
+    dot.className = 'mode-badge-dot';
+    dot.style.background = color;
+    header.appendChild(dot);
+
+    if (isBuiltIn) {
+      var labelSpan = document.createElement('span');
+      labelSpan.className = 'built-in-label';
+      labelSpan.textContent = label;
+      header.appendChild(labelSpan);
+
+      var keyHint = document.createElement('span');
+      keyHint.className = 'key-hint';
+      keyHint.textContent = '(' + key + ')';
+      header.appendChild(keyHint);
+    } else {
+      var labelInput = document.createElement('input');
+      labelInput.type = 'text';
+      labelInput.className = 'mode-label-input';
+      labelInput.value = label;
+      labelInput.placeholder = '显示名称';
+      labelInput.setAttribute('data-custom-label', key);
+      header.appendChild(labelInput);
+
+      var keyInput = document.createElement('input');
+      keyInput.type = 'text';
+      keyInput.className = 'mode-key-input';
+      keyInput.value = key;
+      keyInput.placeholder = '标识符';
+      keyInput.setAttribute('data-custom-key', key);
+      header.appendChild(keyInput);
+
+      var delBtn = document.createElement('button');
+      delBtn.className = 'btn-delete-mode';
+      delBtn.title = '删除此模式';
+      delBtn.setAttribute('data-delete-key', key);
+      delBtn.textContent = '✕';
+      header.appendChild(delBtn);
+    }
+
+    card.appendChild(header);
+
+    // Body
+    var body = document.createElement('div');
+    body.className = 'card-body';
+
+    var promptLabel = document.createElement('label');
+    promptLabel.textContent = 'System Prompt';
+    body.appendChild(promptLabel);
+
+    var promptTa = document.createElement('textarea');
+    promptTa.rows = 3;
+    promptTa.setAttribute('data-prompt', key);
+    promptTa.value = prompt;
+    body.appendChild(promptTa);
+
+    var descLabel = document.createElement('label');
+    descLabel.innerHTML = '🤖 自动识别描述 <span style="font-weight:400;font-size:10px;color:var(--subtext)">（AI 分类器用）</span>';
+    body.appendChild(descLabel);
+
+    var descTa = document.createElement('textarea');
+    descTa.rows = 2;
+    descTa.setAttribute('data-classifier-desc', key);
+    descTa.value = desc;
+    body.appendChild(descTa);
+
+    card.appendChild(body);
+    container.appendChild(card);
+  });
+
+  updateModeCountHint();
+  bindModeCardEvents();
+}
+
+function renderAllModeChips(allModes, modeEnabled) {
+  var container = document.getElementById('mode-chips');
+  container.innerHTML = '';
+
+  allModes.forEach(function(m) {
+    var key = m.key;
+    var label = m.label;
+    var enabled = modeEnabled[key] !== false;
+    var color = _getAccentColor(key);
+
+    var chip = document.createElement('label');
+    chip.setAttribute('style',
+      'display:flex;align-items:center;gap:4px;font-size:11px;' +
+      'background:var(--surface);padding:4px 10px;border-radius:14px;cursor:pointer;'
+    );
+
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = enabled;
+    cb.dataset.mode = key;
+    cb.setAttribute('style', 'accent-color:' + color);
+
+    cb.addEventListener('change', function() {
+      var checkedCount = document.querySelectorAll('#mode-chips input[data-mode]:checked').length;
+      if (checkedCount > 9) {
+        cb.checked = false;
+        showToast('⚠️ 最多启用 9 个模式', 'error');
+      }
+    });
+
+    chip.appendChild(cb);
+    chip.appendChild(document.createTextNode(' ' + label));
+    container.appendChild(chip);
+  });
+}
+
+function updateModeCountHint() {
+  var total = document.querySelectorAll('.mode-card').length;
+  var hint = document.getElementById('mode-count-hint');
+  hint.textContent = total + ' / 9 个模式';
+  if (total >= 9) {
+    hint.style.color = 'var(--hover)';
+    var addBtn = document.getElementById('btn-add-mode');
+    addBtn.disabled = true;
+    addBtn.style.opacity = '0.5';
+    addBtn.style.cursor = 'not-allowed';
+  } else {
+    hint.style.color = 'var(--subtext)';
+    var addBtn2 = document.getElementById('btn-add-mode');
+    addBtn2.disabled = false;
+    addBtn2.style.opacity = '1';
+    addBtn2.style.cursor = 'pointer';
+  }
+}
+
+function bindModeCardEvents() {
+  document.querySelectorAll('[data-delete-key]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var key = this.dataset.deleteKey;
+      if (confirm('确定要删除模式 "' + key + '" 吗？此操作不可撤销。')) {
+        var card = document.querySelector('.mode-card[data-mode-key="' + key + '"]');
+        if (card) card.remove();
+        updateModeCountHint();
+        // 同步更新模式芯片
+        var allModes = getCurrentAllModes();
+        var modeEnabled = collectModeEnabledRaw();
+        renderAllModeChips(allModes, modeEnabled);
+      }
+    });
+  });
+}
+
+function collectModeEnabledRaw() {
+  var result = {};
+  document.querySelectorAll('#mode-chips input[data-mode]').forEach(function(cb) {
+    result[cb.dataset.mode] = cb.checked;
+  });
+  return result;
+}
+
+function getCurrentAllModes() {
+  var modes = [];
+  document.querySelectorAll('.mode-card').forEach(function(card) {
+    var key = card.dataset.modeKey;
+    var labelEl = card.querySelector('.built-in-label');
+    var labelInput = card.querySelector('.mode-label-input');
+    var isBuiltIn = !!labelEl;
+    var label = isBuiltIn ? labelEl.textContent : (labelInput ? labelInput.value : key);
+    modes.push({key: key, label: label, isBuiltIn: isBuiltIn});
+  });
+  return modes;
+}
+
+// ── 添加模式按钮 ──
+document.getElementById('btn-add-mode').addEventListener('click', function() {
+  var totalCards = document.querySelectorAll('.mode-card').length;
+  if (totalCards >= 9) {
+    showToast('⚠️ 最多支持 9 个模式', 'error');
+    return;
+  }
+
+  var newIdx = 1;
+  var newKey = 'custom_' + newIdx;
+  while (document.querySelector('.mode-card[data-mode-key="' + newKey + '"]')) {
+    newIdx++;
+    newKey = 'custom_' + newIdx;
+  }
+
+  var container = document.getElementById('mode-cards-container');
+  var color = _getAccentColor(newKey);
+
+  var card = document.createElement('div');
+  card.className = 'mode-card';
+  card.dataset.modeKey = newKey;
+
+  // Header
+  var header = document.createElement('div');
+  header.className = 'card-header';
+  var dot = document.createElement('span');
+  dot.className = 'mode-badge-dot';
+  dot.style.background = color;
+  header.appendChild(dot);
+
+  var labelInput = document.createElement('input');
+  labelInput.type = 'text';
+  labelInput.className = 'mode-label-input';
+  labelInput.value = '新模式';
+  labelInput.placeholder = '显示名称';
+  labelInput.setAttribute('data-custom-label', newKey);
+  header.appendChild(labelInput);
+
+  var keyInput = document.createElement('input');
+  keyInput.type = 'text';
+  keyInput.className = 'mode-key-input';
+  keyInput.value = newKey;
+  keyInput.placeholder = '标识符';
+  keyInput.setAttribute('data-custom-key', newKey);
+  header.appendChild(keyInput);
+
+  var delBtn = document.createElement('button');
+  delBtn.className = 'btn-delete-mode';
+  delBtn.title = '删除此模式';
+  delBtn.setAttribute('data-delete-key', newKey);
+  delBtn.textContent = '✕';
+  header.appendChild(delBtn);
+  card.appendChild(header);
+
+  // Body
+  var body = document.createElement('div');
+  body.className = 'card-body';
+
+  var promptLabel = document.createElement('label');
+  promptLabel.textContent = 'System Prompt';
+  body.appendChild(promptLabel);
+
+  var promptTa = document.createElement('textarea');
+  promptTa.rows = 3;
+  promptTa.setAttribute('data-prompt', newKey);
+  body.appendChild(promptTa);
+
+  var descLabel = document.createElement('label');
+  descLabel.innerHTML = '🤖 自动识别描述 <span style="font-weight:400;font-size:10px;color:var(--subtext)">（AI 分类器用）</span>';
+  body.appendChild(descLabel);
+
+  var descTa = document.createElement('textarea');
+  descTa.rows = 2;
+  descTa.setAttribute('data-classifier-desc', newKey);
+  body.appendChild(descTa);
+
+  card.appendChild(body);
+  container.appendChild(card);
+
+  updateModeCountHint();
+  bindModeCardEvents();
+
+  // 同步更新模式芯片
+  var allModes = getCurrentAllModes();
+  var modeEnabled = collectModeEnabledRaw();
+  modeEnabled[newKey] = true;
+  renderAllModeChips(allModes, modeEnabled);
+});
 
 // ══════════════════════════════════════════════════════════════
 // 按钮事件 — 桥接到 Python
@@ -991,13 +1360,21 @@ document.getElementById('btn-reset-all').addEventListener('click', function() {
 // ── 恢复 Prompt 默认 ──
 document.getElementById('btn-reset-prompts').addEventListener('click', function() {
   if (!api) { showToast('⚠️ 未连接后端', 'error'); return; }
-  api.resetPrompts().then(function(prompts) {
+  api.resetPrompts().then(function(result) {
+    var prompts = result.modePrompts || {};
+    var descs = result.classifierDescs || {};
     document.querySelectorAll('textarea[data-prompt]').forEach(function(ta) {
       if (ta.dataset.prompt in prompts) {
         ta.value = prompts[ta.dataset.prompt];
       }
     });
-    showToast('✅ 已恢复默认 Prompt', 'success');
+    document.querySelectorAll('textarea[data-classifier-desc]').forEach(function(ta) {
+      var key = ta.dataset.classifierDesc;
+      if (key in descs) {
+        ta.value = descs[key];
+      }
+    });
+    showToast('✅ 已恢复默认 Prompt 和分类描述', 'success');
   }).catch(function(e) {
     showToast('❌ 操作失败: ' + e, 'error');
   });

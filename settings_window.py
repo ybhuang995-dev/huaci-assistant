@@ -13,6 +13,7 @@ from pathlib import Path
 from config import (Config, MODES, DEFAULT_MODE,
                      MODE_ENABLED, FILTERS_ENABLED,
                      _FACTORY_MODE_PROMPTS, _FACTORY_MODE_ENABLED,
+                     _FACTORY_MODE_CLASSIFIER_DESCS, _FACTORY_CUSTOM_MODES,
                      _FACTORY_FILTERS)
 
 
@@ -54,13 +55,14 @@ _KEY_MAP = {
     "baseUrl": "DEEPSEEK_BASE_URL",
     "model": "DEEPSEEK_MODEL",
     "pollInterval": "POLL_INTERVAL",
+    "userDirection": "USER_DIRECTION",
 }
 
 # ── 字典类型字段：JS camelCase → .env UPPER_SNAKE_CASE ──
 _DICT_MAP = {
     "modeEnabled": "MODE_ENABLED",
-    "modePrompts": "MODE_PROMPTS",
     "filters": "FILTERS",
+    "customModes": "CUSTOM_MODES",
 }
 
 # 反向映射
@@ -75,6 +77,31 @@ class SettingsApi:
 
     def getConfig(self) -> dict:
         """JS 初始化时调用，返回当前所有配置值"""
+        # 构建 allModes 列表（用于动态渲染）
+        all_modes = []
+        for mk in MODES:
+            all_modes.append({
+                "key": mk,
+                "label": MODES[mk]["label"],
+                "isBuiltIn": not MODES[mk].get("custom", False),
+            })
+
+        # 构建 classifierDescs（所有模式的分类器描述）
+        classifier_descs = {
+            mk: MODES[mk].get("classifier_desc", "") for mk in MODES
+        }
+
+        # 构建 customModes 数组
+        custom_modes = []
+        for mk in MODES:
+            if MODES[mk].get("custom"):
+                custom_modes.append({
+                    "key": mk,
+                    "label": MODES[mk]["label"],
+                    "system_prompt": MODES[mk].get("system_prompt", ""),
+                    "classifier_desc": MODES[mk].get("classifier_desc", ""),
+                })
+
         return {
             "windowWidth": Config.WINDOW_WIDTH,
             "windowHeight": Config.WINDOW_HEIGHT,
@@ -90,8 +117,12 @@ class SettingsApi:
             "baseUrl": Config.DEEPSEEK_BASE_URL,
             "model": Config.DEEPSEEK_MODEL,
             "pollInterval": int(Config.POLL_INTERVAL * 1000),
+            "userDirection": Config.USER_DIRECTION,
             "modeEnabled": dict(MODE_ENABLED),
             "modePrompts": {mk: MODES[mk].get("system_prompt", "") for mk in MODES},
+            "classifierDescs": classifier_descs,
+            "customModes": custom_modes,
+            "allModes": all_modes,
             "filters": dict(FILTERS_ENABLED),
         }
 
@@ -110,6 +141,11 @@ class SettingsApi:
 
     def resetAll(self) -> dict:
         """JS 恢复全部默认，返回出厂预设值供前端回填（保留 API 配置）"""
+        # 出厂状态只有内置模式
+        all_modes_factory = [
+            {"key": mk, "label": MODES[mk]["label"], "isBuiltIn": True}
+            for mk in MODES if not MODES[mk].get("custom", False)
+        ]
         return {
             "windowWidth": 800,
             "windowHeight": 600,
@@ -126,14 +162,21 @@ class SettingsApi:
             "baseUrl": Config.DEEPSEEK_BASE_URL,
             "model": Config.DEEPSEEK_MODEL,
             "pollInterval": 400,
+            "userDirection": "",
             "modeEnabled": dict(_FACTORY_MODE_ENABLED),
             "modePrompts": dict(_FACTORY_MODE_PROMPTS),
+            "classifierDescs": dict(_FACTORY_MODE_CLASSIFIER_DESCS),
+            "customModes": list(_FACTORY_CUSTOM_MODES),
+            "allModes": all_modes_factory,
             "filters": dict(_FACTORY_FILTERS),
         }
 
     def resetPrompts(self) -> dict:
-        """JS 恢复 Prompt 为出厂预设，返回 {mode_key: original_prompt}"""
-        return dict(_FACTORY_MODE_PROMPTS)
+        """JS 恢复 Prompt 和分类描述为出厂预设"""
+        return {
+            "modePrompts": dict(_FACTORY_MODE_PROMPTS),
+            "classifierDescs": dict(_FACTORY_MODE_CLASSIFIER_DESCS),
+        }
 
     def close(self) -> None:
         """JS 关闭窗口"""
@@ -221,6 +264,23 @@ class SettingsWindow:
             if val is not None:
                 values[py_key] = _json.dumps(val, ensure_ascii=False)
 
+        # ── modePrompts / classifierDescs：仅保存内置模式的覆盖值 ──
+        built_in_keys = {mk for mk in MODES if not MODES[mk].get("custom")}
+
+        raw_mode_prompts = data.get("modePrompts", {})
+        built_in_prompts = {
+            k: v for k, v in raw_mode_prompts.items() if k in built_in_keys
+        }
+        values["MODE_PROMPTS"] = _json.dumps(built_in_prompts, ensure_ascii=False)
+
+        raw_classifier_descs = data.get("classifierDescs", {})
+        built_in_descs = {
+            k: v for k, v in raw_classifier_descs.items() if k in built_in_keys
+        }
+        values["MODE_CLASSIFIER_DESCS"] = _json.dumps(
+            built_in_descs, ensure_ascii=False
+        )
+
         # ── 写入 .env ──
         existing_lines = []
         if env_path.exists():
@@ -272,9 +332,12 @@ class SettingsWindow:
             "hotkeyPause": _ev("HOTKEY_PAUSE", Config.HOTKEY_PAUSE),
             "autoStart": _ev("AUTO_START", str(Config.AUTO_START)),
             "provider": _ev("PROVIDER", Config.PROVIDER),
+            "userDirection": _ev("USER_DIRECTION", Config.USER_DIRECTION),
             # 字典字段（传原始 dict，main.py 用它们更新 MODES 等）
             "modePrompts": data.get("modePrompts", {}),
             "modeEnabled": data.get("modeEnabled", {}),
+            "classifierDescs": data.get("classifierDescs", {}),
+            "customModes": data.get("customModes", []),
             "filters": data.get("filters", {}),
         }
 

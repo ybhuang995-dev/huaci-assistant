@@ -49,6 +49,7 @@ _KEY_MAP = {
     "autoDict": "AUTO_DICT",
     "autoRoute": "AUTO_ROUTE",
     "saveHistory": "SAVE_HISTORY",
+    "historyMinNodes": "HISTORY_MIN_NODES",
     "hotkeyPause": "HOTKEY_PAUSE",
     "provider": "PROVIDER",
     "apiKey": "DEEPSEEK_API_KEY",
@@ -111,6 +112,7 @@ class SettingsApi:
             "autoDict": Config.AUTO_DICT,
             "autoRoute": Config.AUTO_ROUTE,
             "saveHistory": Config.SAVE_HISTORY,
+            "historyMinNodes": Config.HISTORY_MIN_NODES,
             "hotkeyPause": Config.HOTKEY_PAUSE,
             "provider": Config.PROVIDER,
             "apiKey": Config.DEEPSEEK_API_KEY,
@@ -155,6 +157,7 @@ class SettingsApi:
             "autoDict": True,
             "autoRoute": False,
             "saveHistory": False,
+            "historyMinNodes": 3,
             "hotkeyPause": "ctrl+shift+p",
             # API 配置保留当前值，不随"恢复默认"清除
             "provider": Config.PROVIDER,
@@ -178,6 +181,56 @@ class SettingsApi:
             "classifierDescs": dict(_FACTORY_MODE_CLASSIFIER_DESCS),
         }
 
+    def getHistoryList(self, limit: int = 50, offset: int = 0) -> dict:
+        """JS: 获取历史记录列表（含节点数统计）"""
+        import history as _hist
+        records = _hist.get_history_list(limit, offset)
+        total = _hist.get_history_total()
+        return {
+            "records": records,
+            "total": total,
+            "minNodes": Config.HISTORY_MIN_NODES,
+        }
+
+    def getHistoryChain(self, rootId: int) -> dict:
+        """JS: 获取一条完整的追问链"""
+        import history as _hist
+        chain = _hist.get_chain(rootId)
+        return {"chain": chain}
+
+    def deleteHistory(self, queryId: int) -> dict:
+        """JS: 删除一条记录及其子追问"""
+        import history as _hist
+        ok = _hist.delete_query(queryId)
+        return {"success": ok}
+
+    def deleteAllHistory(self) -> dict:
+        """JS: 清除全部历史"""
+        import history as _hist
+        ok = _hist.delete_all()
+        return {"success": ok}
+
+    def replayHistory(self, rootId: int) -> dict:
+        """JS: 在悬浮窗中回放历史对话
+
+        注意：pywebview.start() 阻塞了主线程（tkinter 事件循环），
+        JS bridge 回调运行在 webview 消息循环内部。此时无法弹出悬浮窗，
+        因为 tkinter 的 root.mainloop() 被 webview.start() 阻塞了。
+
+        解决：将回放链存入 _pending_replay_chain，关闭设置窗口。
+        _do_show() 在 webview.start() 返回后会检查该字段，
+        用 root.after 延迟触发回放（此时主线程已恢复）。
+        """
+        import history as _hist
+        chain = _hist.get_chain(rootId)
+        if not chain:
+            return {"success": False, "message": "记录不存在"}
+        if self._s._on_replay_history:
+            self._s._pending_replay_chain = chain
+        # 关闭设置窗口 → 触发 webview.start() 返回 → _do_show() 处理回放
+        self._s.hide()
+        return {"success": True, "message": "已加载到悬浮窗"}
+
     def close(self) -> None:
         """JS 关闭窗口"""
         self._s.hide()
@@ -186,10 +239,13 @@ class SettingsApi:
 class SettingsWindow:
     """设置面板 — pywebview 窗口管理器"""
 
-    def __init__(self, root, on_save: callable = None):
+    def __init__(self, root, on_save: callable = None,
+                 on_replay_history: callable = None):
         self.root = root       # tkinter root，保持兼容
         self._on_save = on_save
+        self._on_replay_history = on_replay_history
         self._window: webview.Window | None = None
+        self._pending_replay_chain: list[dict] | None = None
 
     # ══════════════════════════════════════════════════════════
     # 公共 API（main.py 调用）
@@ -229,6 +285,15 @@ class SettingsWindow:
         # webview.start() 阻塞当前线程（主线程），窗口关闭后返回
         webview.start()
         self._window = None
+
+        # ── 处理待回放的历史链 ──
+        # replayHistory() 在关闭设置窗口前设置了 _pending_replay_chain。
+        # 此时 webview.start() 已返回，主线程完全恢复，可以安全弹出悬浮窗。
+        if self._pending_replay_chain is not None:
+            chain = self._pending_replay_chain
+            self._pending_replay_chain = None
+            if self._on_replay_history:
+                self.root.after(80, lambda c=chain: self._on_replay_history(c))
 
     def hide(self) -> None:
         """关闭 webview 窗口"""
@@ -329,6 +394,7 @@ class SettingsWindow:
             "autoDict": _ev("AUTO_DICT", str(Config.AUTO_DICT)),
             "autoRoute": _ev("AUTO_ROUTE", str(Config.AUTO_ROUTE)),
             "saveHistory": _ev("SAVE_HISTORY", str(Config.SAVE_HISTORY)),
+            "historyMinNodes": _ev("HISTORY_MIN_NODES", str(Config.HISTORY_MIN_NODES)),
             "hotkeyPause": _ev("HOTKEY_PAUSE", Config.HOTKEY_PAUSE),
             "autoStart": _ev("AUTO_START", str(Config.AUTO_START)),
             "provider": _ev("PROVIDER", Config.PROVIDER),

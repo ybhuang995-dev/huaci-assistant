@@ -431,6 +431,13 @@ def _make_follow_up_handler(window: FloatingWindow):
     return handler
 
 
+def _on_replay_history(chain: list[dict]) -> None:
+    """设置面板回调：在悬浮窗回放一条历史追问链"""
+    if _window_ref is not None:
+        _window_ref.load_tree_chain(chain)
+        _log(f"REPLAY: loaded chain with {len(chain)} nodes")
+
+
 # ═══════════════════════════════════════════════════════════
 # 主线程：处理剪贴板事件
 # ═══════════════════════════════════════════════════════════
@@ -568,6 +575,7 @@ def main() -> None:
     global _settings_window
     _settings_window = SettingsWindow(
         root, on_save=_on_settings_saved,
+        on_replay_history=_on_replay_history,
     )
 
     # ── 首次启动引导：无 API Key 时自动弹出设置面板 ──

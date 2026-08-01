@@ -172,6 +172,7 @@ class FloatingWindow:
 
         self._build_tab_bar()
         self._build_original_preview()
+        self._add_separator(self._inner, tk.TOP)  # 原文预览下方分隔线
         self._build_action_bar()      # BOTTOM 先 pack，抢在 expand 之前占位
         self._build_input_bar()       # BOTTOM（在操作栏上方）
         self._build_result_area()     # TOP expand 后 pack，吃剩余空间

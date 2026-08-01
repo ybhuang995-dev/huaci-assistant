@@ -276,6 +276,10 @@ class FloatingWindow:
         self._next_node_id = 0
         self._add_node("query", self.original_text, "⏳ 正在处理，请稍候...", mode_key)
 
+    def is_visible(self) -> bool:
+        """悬浮窗当前是否可见"""
+        return self.window is not None
+
     def hide(self, event=None) -> None:
         self._hide_context_menu()
         if self.window:

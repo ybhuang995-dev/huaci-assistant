@@ -538,12 +538,14 @@ def _schedule_main_loop(root: tk.Tk, window: FloatingWindow,
             return
 
         # 批量处理剪贴板事件（每次最多取 3 个，避免阻塞主循环）
-        try:
-            for _ in range(3):
-                text = _clip_queue.get_nowait()
-                _start_query_for_text(root, window, text)
-        except queue.Empty:
-            pass
+        # 悬浮窗已可见时跳过：避免覆盖当前正在查看的结果
+        if not window.is_visible():
+            try:
+                for _ in range(3):
+                    text = _clip_queue.get_nowait()
+                    _start_query_for_text(root, window, text)
+            except queue.Empty:
+                pass
 
         root.after(100, _tick)
 

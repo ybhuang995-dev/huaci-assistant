@@ -340,7 +340,10 @@ def _on_settings_saved(values: dict) -> None:
 # ═══════════════════════════════════════════════════════════
 
 def _on_clipboard_change(text: str) -> None:
-    """剪贴板变更回调 — 放入剪贴板队列（去重由 ClipboardMonitor 保证）"""
+    """剪贴板变更回调 — 放入剪贴板队列（去重由 ClipboardMonitor 保证）。
+    悬浮窗可见时直接丢弃，关闭后也不会弹出期间的复制内容。"""
+    if _window_ref is not None and _window_ref.is_visible():
+        return
     _clip_queue.put(text)
 
 
@@ -538,8 +541,14 @@ def _schedule_main_loop(root: tk.Tk, window: FloatingWindow,
             return
 
         # 批量处理剪贴板事件（每次最多取 3 个，避免阻塞主循环）
-        # 悬浮窗已可见时跳过：避免覆盖当前正在查看的结果
-        if not window.is_visible():
+        if window.is_visible():
+            # 悬浮窗已可见：丢弃队列中的剪贴板事件，关闭后不再弹出
+            try:
+                while True:
+                    _clip_queue.get_nowait()
+            except queue.Empty:
+                pass
+        else:
             try:
                 for _ in range(3):
                     text = _clip_queue.get_nowait()

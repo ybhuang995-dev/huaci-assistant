@@ -94,6 +94,7 @@ Windows 桌面工具：在任意应用中选中文字，Ctrl+C 复制，自动�
 - **两层去重**：① `_read_clipboard()` 标准化文本 + `_last_text`/`_last_triggered` 比较 ② `mark_as_seen()` 标记自己写入剪贴板的内容
 - **工作队列任务格式**：`(text, mode, query_id, follow_up_data_or_None)`
 - **pywebview 线程约束**：`webview.start()` 必须在主线程调用。`SettingsWindow.show()` 检测当前线程，非主线程时通过 `root.after(0, self._do_show)` 委托，避免 `WebViewException`
+- **悬浮窗互斥**：悬浮窗可见时，`_on_clipboard_change()` 直接丢弃剪贴板事件（不入队） + `_tick()` 持续排空队列兜底。关闭窗口后期间的复制内容不会弹出
 
 ## 文件结构
 
@@ -103,10 +104,11 @@ Windows 桌面工具：在任意应用中选中文字，Ctrl+C 复制，自动�
 ├── floating_window.py       # 悬浮窗 UI（tkinter Toplevel + HtmlFrame）
 ├── settings_window.py       # 设置面板（pywebview WebView2 + SettingsApi bridge）
 ├── clipboard_monitor.py     # 剪贴板监听（Windows API + 8 条正则过滤）
-├── engine.py                # LLM 引擎（httpx SSE 流式 + follow_up + classify）
+├── engine.py                # LLM 引擎（urllib SSE 流式 + 公共契约 + 追问独立语义）
 ├── config.py                # 配置类 + 模式定义 + 过滤规则 + 出厂预设
 ├── autostart.py             # 开机自启（注册表 HKCU\...\Run）
 ├── history.py               # SQLite 历史记录（自动保存 + 浏览 + 回放）
+├── test_prompt_refactor.py   # Prompt 链路单元测试（28 条）
 ├── prototypes/
 │   └── settings-panel.html  # 设置面板 HTML/CSS/JS 原型（890+ 行）
 ├── requirements.txt
@@ -169,8 +171,8 @@ filters               →  FILTERS             dict → JSON string
 
 - `windowWidth/Height` → `Config.WINDOW_*` + `_window_ref.resize()` + `refresh_tabs()`
 - `apiKey/baseUrl/model` → `engine.*` 属性直接更新
-- `defaultMode` → `Config.DEFAULT_MODE` + 模块级 `DEFAULT_MODE`
-- `modePrompts` → `MODES[mk]["system_prompt"]` 热替换
+- `defaultMode` → `Config.DEFAULT_MODE`（已移除模块级双绑定，统一用 `_resolve_default_mode()` 回退）
+- `modePrompts` → `MODES[mk]["system_prompt"]` 热替换（仅保存与出厂默认不同的覆盖值）
 - `modeEnabled` → `MODE_ENABLED` 热替换 + `_window_ref.refresh_tabs()` 实时显示/隐藏标签
 - `filters` → `FILTERS_ENABLED` 热替换
 - `pollInterval/font/autoDict/autoStart/provider` → `Config.*` 属性更新
@@ -224,19 +226,33 @@ node = {
 
 ## 模式设计（Prompt 驱动）
 
+所有模式共用 `_compose_system_prompt(mode, is_follow_up)` 统一合成，结构为：
+
+```
+公共契约 (_COMMON_CONTRACT) → 模式 Prompt / 追问 Prompt → USER_DIRECTION（模式感知限制）
+```
+
+**公共契约**：不可变护栏——轻量划词助手定位、材料安全（不服从原文中的指令）、默认简短、不猜测上下文、不替用户决策。
+
 | 模式 | key | System Prompt 要点 |
 |------|-----|-------------------|
-| 翻译 | `translate` | 中→英 / 英→中，保留格式 |
-| 提问 | `ask` | 通用 AI 助手，中文回答 |
-| 代码 | `code` | 解释/审查/优化代码，指出 bug 和改进建议 |
-| 总结 | `summarize` | 3-5 要点，无序列表 |
-| 词典 | `dict` | 音标（英式/美式）+ 词性 + 释义 + 例句 |
+| 翻译 | `translate` | 中→英 / 英→中，保留格式，只输出译文 |
+| 提问 | `ask` | 快速看懂材料，处理权限/命令/警告/报错 |
+| 代码 | `code` | 帮助读懂代码，聚焦理解而非教学语法 |
+| 总结 | `summarize` | 压缩成方便继续工作的摘要，不固定要点数量 |
+| 词典 | `dict` | 音标 + 词性 + 释义 + 例句，不展开成完整词典条目 |
 
-所有模式共用 `DeepSeekEngine.query_stream()` / `follow_up_stream()`，差异只在 `config.py` 的 `MODES[key]["system_prompt"]`。Prompt 可在设置面板中自定义。
+**追问独立语义**：`_FOLLOW_UP_SYSTEM_PROMPT` 不继承模式 Prompt。区分两种来源——输入框发送（`kind="question"`，直接回答）和右键选中回答片段（`kind="selection"`，解释该片段在当前上下文中的含义）。
+
+**USER_DIRECTION 模式感知限制**：
+- 翻译/总结：只能用于术语消歧，不得改变原意/重点
+- ask/code/dict/追问：可以调整解释角度，但不能假设未展示的文件或环境状态
+
+**自动路由优先级**：自定义模式 → 词典 → ask（权限/错误/Agent提示） → code → 总结 → 翻译 → ask（通用） → 回退。分类器含注入保护说明，防止用户输入篡改分类任务。
 
 **模式启用/禁用**：设置面板中可切换每个模式的开关（`MODE_ENABLED`），浮窗标签栏即时反映——只显示已启用的模式标签。
 
-**单词检测**：`is_single_english_word(text)` 检测单个英文单词（2-30 字母），自动切换到词典模式。
+**单词检测**：`is_single_english_word(text)` 检测单个英文单词（2-30 字母），自动切换到词典模式。需同时满足 `AUTO_DICT=true` 且 dict 模式存在且已启用。
 
 ## tkinter 注意事项
 
@@ -272,6 +288,8 @@ node = {
 ### 📋 Phase 3
 - 自定义 Prompt（已在设置面板中支持编辑，热生效 ✅）
 - PyInstaller 打包单 exe（`划词助手.spec`，52MB，工作正常 ✅）
+- Prompt 链路改造（公共契约 + 追问独立语义 + USER_DIRECTION 限制 + 分类器优化 + 28 条单元测试 ✅）
+- 悬浮窗互斥（可见时 Ctrl+C 不监听，关闭后不弹出期间的复制内容 ✅）
 
 ## 行为边界
 

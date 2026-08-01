@@ -30,3 +30,7 @@ history.db
 # Claude Code
 .claude/
 .claude/worktrees/
+
+# 本地 AI Agent 说明（仅保留在本机）
+AGENTS.md
+CLAUDE.md

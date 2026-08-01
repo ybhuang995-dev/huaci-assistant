@@ -10,7 +10,7 @@ import sys
 import threading
 import webview
 from pathlib import Path
-from config import (Config, MODES, DEFAULT_MODE,
+from config import (Config, MODES,
                      MODE_ENABLED, FILTERS_ENABLED,
                      _FACTORY_MODE_PROMPTS, _FACTORY_MODE_ENABLED,
                      _FACTORY_MODE_CLASSIFIER_DESCS, _FACTORY_CUSTOM_MODES,
@@ -106,7 +106,7 @@ class SettingsApi:
         return {
             "windowWidth": Config.WINDOW_WIDTH,
             "windowHeight": Config.WINDOW_HEIGHT,
-            "defaultMode": DEFAULT_MODE,
+            "defaultMode": Config.DEFAULT_MODE,
             "font": Config.FONT,
             "autoStart": Config.AUTO_START,
             "autoDict": Config.AUTO_DICT,
@@ -330,19 +330,25 @@ class SettingsWindow:
             if val is not None:
                 values[py_key] = _json.dumps(val, ensure_ascii=False)
 
-        # ── modePrompts / classifierDescs：仅保存内置模式的覆盖值 ──
+        # ── modePrompts / classifierDescs：仅保存与出厂默认不同的覆盖值 ──
         built_in_keys = {mk for mk in MODES if not MODES[mk].get("custom")}
 
         raw_mode_prompts = data.get("modePrompts", {})
-        built_in_prompts = {
-            k: v for k, v in raw_mode_prompts.items() if k in built_in_keys
-        }
+        built_in_prompts = {}
+        for k, v in raw_mode_prompts.items():
+            if k in built_in_keys:
+                factory = _FACTORY_MODE_PROMPTS.get(k, "")
+                if v != factory:
+                    built_in_prompts[k] = v
         values["MODE_PROMPTS"] = _json.dumps(built_in_prompts, ensure_ascii=False)
 
         raw_classifier_descs = data.get("classifierDescs", {})
-        built_in_descs = {
-            k: v for k, v in raw_classifier_descs.items() if k in built_in_keys
-        }
+        built_in_descs = {}
+        for k, v in raw_classifier_descs.items():
+            if k in built_in_keys:
+                factory = _FACTORY_MODE_CLASSIFIER_DESCS.get(k, "")
+                if v != factory:
+                    built_in_descs[k] = v
         values["MODE_CLASSIFIER_DESCS"] = _json.dumps(
             built_in_descs, ensure_ascii=False
         )
@@ -390,7 +396,7 @@ class SettingsWindow:
             "pollInterval": str(int(float(
                 _ev("POLL_INTERVAL", str(Config.POLL_INTERVAL))) * 1000)),
             # 通用
-            "defaultMode": _ev("DEFAULT_MODE", DEFAULT_MODE),
+            "defaultMode": _ev("DEFAULT_MODE", Config.DEFAULT_MODE),
             "font": _ev("FONT", Config.FONT),
             "autoDict": _ev("AUTO_DICT", str(Config.AUTO_DICT)),
             "autoRoute": _ev("AUTO_ROUTE", str(Config.AUTO_ROUTE)),

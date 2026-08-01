@@ -12,7 +12,7 @@
 import tkinter as tk
 import markdown
 from tkinterweb import HtmlFrame
-from config import Config, MODES, MODE_TITLES, DEFAULT_MODE, MODE_ENABLED
+from config import Config, MODES, MODE_TITLES, MODE_ENABLED, _resolve_default_mode
 
 FONT = Config.FONT
 
@@ -92,7 +92,7 @@ class FloatingWindow:
         self._drag_y = 0
 
         # 状态
-        self.current_mode = DEFAULT_MODE
+        self.current_mode = _resolve_default_mode()
         self.original_text = ""
 
         # 对话树
@@ -201,7 +201,7 @@ class FloatingWindow:
         self._on_copy = callback
 
     def set_on_follow_up(self, callback: callable) -> None:
-        """设置追问回调：callback(selected, original, previous, mode)"""
+        """设置追问回调：callback(selected, original, previous, mode, kind)"""
         self._on_follow_up = callback
 
     def set_on_settings(self, callback: callable) -> None:
@@ -884,8 +884,8 @@ class FloatingWindow:
         self._input_entry.configure(fg=C["text"])
         self._input_entry.focus_set()
 
-        # 复用追问逻辑
-        self._do_follow_up(text)
+        # 复用追问逻辑（输入框 → kind="question"）
+        self._do_follow_up(text, kind="question")
 
     # ── 追问（右键菜单） ──────────────────────────────
 
@@ -919,8 +919,13 @@ class FloatingWindow:
                 pass
             self._context_menu = None
 
-    def _do_follow_up(self, selected: str) -> None:
-        """执行追问：基于选中的文字创建子节点 → 发起请求"""
+    def _do_follow_up(self, selected: str, kind: str = "selection") -> None:
+        """执行追问：基于选中的文字创建子节点 → 发起请求。
+
+        Args:
+            selected: 追问文本
+            kind: "question"（输入框发送）或 "selection"（右键选中回答）
+        """
         self._hide_context_menu()
 
         # 活跃节点即为追问的父节点
@@ -938,6 +943,7 @@ class FloatingWindow:
                 self.original_text,
                 prev_result,
                 self.current_mode,
+                kind,
             )
 
     def _get_node(self, node_id: int) -> dict | None:

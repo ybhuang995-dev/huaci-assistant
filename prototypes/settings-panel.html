@@ -692,9 +692,9 @@
       </div>
 
       <div class="form-group">
-        <label>当前关注方向 <span style="font-weight:400;color:var(--subtext)">（可选）</span></label>
-        <div class="hint">填写你当前聚焦的方向或上下文，AI 会据此调整回答风格。例如："我正在学习 Rust 编程"、"准备前端面试"</div>
-        <textarea data-key="userDirection" rows="3" placeholder="例如：我正在学习 Rust 编程语言，请用初学者能理解的方式解释..."></textarea>
+        <label>当前关注方向 <span style="font-weight:400;color:var(--subtext)">（可选，仅作辅助上下文）</span></label>
+        <div class="hint">填写你当前聚焦的领域或背景，仅用于术语消歧和调整解释层次。不是额外任务，不会覆盖模式行为，也不会改变材料事实或补造未提供的项目上下文。例如："正在学习 Rust"、"准备前端面试"</div>
+        <textarea data-key="userDirection" rows="3" placeholder="例如：正在学习 Rust 编程，涉及系统编程和所有权概念..."></textarea>
       </div>
 
       <div class="toggle-row">
@@ -1736,7 +1736,7 @@ document.getElementById('btn-reset-prompts').addEventListener('click', function(
         ta.value = descs[key];
       }
     });
-    showToast('✅ 已恢复默认 Prompt 和分类描述', 'success');
+    showToast('✅ 已恢复默认 Prompt 和分类描述，请点击「💾 保存设置」使默认值生效', 'success');
   }).catch(function(e) {
     showToast('❌ 操作失败: ' + e, 'error');
   });

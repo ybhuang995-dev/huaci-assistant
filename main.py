@@ -23,7 +23,7 @@ import pystray
 from PIL import Image, ImageDraw
 from pynput import keyboard as pynput_keyboard
 
-from config import Config, DEFAULT_MODE, MODES, MODE_ENABLED, FILTERS_ENABLED, is_single_english_word
+from config import Config, MODES, MODE_ENABLED, FILTERS_ENABLED, is_single_english_word, _resolve_default_mode
 from clipboard_monitor import ClipboardMonitor, _log
 from engine import engine
 from floating_window import FloatingWindow
@@ -303,14 +303,11 @@ def _on_settings_saved(values: dict) -> None:
         FILTERS_ENABLED.update(filters)
         _log(f"SETTINGS: filters updated")
 
-    # 校验 DEFAULT_MODE 仍然有效（自定义模式被删除时可能失效）
-    if Config.DEFAULT_MODE not in MODES:
-        Config.DEFAULT_MODE = "translate"
-        _log(f"SETTINGS: defaultMode fell back to translate")
-
-    # 更新模块级 DEFAULT_MODE
-    import config as _cfg
-    _cfg.DEFAULT_MODE = Config.DEFAULT_MODE
+    # 校验 DEFAULT_MODE 仍然有效（自定义模式被删除/禁用时可能失效）
+    effective = _resolve_default_mode()
+    if Config.DEFAULT_MODE != effective:
+        _log(f"SETTINGS: defaultMode {Config.DEFAULT_MODE} → {effective}")
+        Config.DEFAULT_MODE = effective
 
     # 热更新悬浮窗尺寸（如果窗口当前可见）
     if _window_ref is not None:
@@ -364,8 +361,9 @@ def _worker(root: tk.Tk, window: FloatingWindow) -> None:
              + (" [追问]" if follow_up_data else ""))
         try:
             if follow_up_data:
-                original, previous = follow_up_data
-                stream = engine.follow_up_stream(original, previous, text, mode)
+                original, previous, kind = follow_up_data
+                stream = engine.follow_up_stream(
+                    original, previous, text, mode, kind=kind)
             else:
                 stream = engine.query_stream(text, mode)
 
@@ -421,13 +419,14 @@ def _make_retry_handler(window: FloatingWindow):
 
 
 def _make_follow_up_handler(window: FloatingWindow):
-    def handler(selected: str, original: str, previous: str, mode: str) -> None:
+    def handler(selected: str, original: str, previous: str, mode: str,
+                kind: str = "selection") -> None:
         global _query_counter
         with _query_lock:
             _query_counter += 1
             qid = _query_counter
-        _log(f"UI: follow_up [{mode}] selected=[{selected[:40]}]")
-        _work_queue.put((selected, mode, qid, (original, previous)))
+        _log(f"UI: follow_up [{mode}] kind={kind} selected=[{selected[:40]}]")
+        _work_queue.put((selected, mode, qid, (original, previous, kind)))
     return handler
 
 
@@ -448,11 +447,13 @@ def _start_query_for_text(root: tk.Tk, window: FloatingWindow,
     global _query_counter
 
     # 单词检测（快速路径，不触发 LLM 分类）
-    if is_single_english_word(text) and Config.AUTO_DICT:
+    # 必须同时满足：AUTO_DICT=true、dict 模式存在且已启用
+    if (is_single_english_word(text) and Config.AUTO_DICT
+            and "dict" in MODES and MODE_ENABLED.get("dict", True)):
         initial_mode = "dict"
         auto_route = False
     else:
-        initial_mode = DEFAULT_MODE
+        initial_mode = _resolve_default_mode()
         auto_route = Config.AUTO_ROUTE
 
     _log(f"MAIN: show window for [{text[:60]}], "
